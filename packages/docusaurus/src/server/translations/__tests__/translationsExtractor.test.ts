@@ -5,20 +5,13 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+import {jest} from '@jest/globals';
+import path from 'path';
 import fs from 'fs-extra';
 import tmp from 'tmp-promise';
-import {
-  extractSourceCodeFileTranslations,
-  extractSiteSourceCodeTranslations,
-} from '../translationsExtractor';
-import {getBabelOptions} from '../../../webpack/utils';
-import path from 'path';
-import {InitializedPlugin} from '@docusaurus/types';
-import {SRC_DIR_NAME} from '../../../constants';
-
-const TestBabelOptions = getBabelOptions({
-  isServer: true,
-});
+import {SRC_DIR_NAME} from '@docusaurus/utils';
+import {extractSiteSourceCodeTranslations} from '../translationsExtractor';
+import type {InitializedPlugin, LoadedPlugin} from '@docusaurus/types';
 
 async function createTmpDir() {
   const {path: siteDirPath} = await tmp.dir({
@@ -27,219 +20,8 @@ async function createTmpDir() {
   return siteDirPath;
 }
 
-async function createTmpSourceCodeFile({
-  extension,
-  content,
-}: {
-  extension: string;
-  content: string;
-}) {
-  const file = await tmp.file({
-    prefix: 'jest-createTmpSourceCodeFile',
-    postfix: `.${extension}`,
-  });
-
-  await fs.writeFile(file.path, content);
-
-  return {
-    sourceCodeFilePath: file.path,
-  };
-}
-
-describe('extractSourceCodeTranslations', () => {
-  test('throw for bad source code', async () => {
-    const {sourceCodeFilePath} = await createTmpSourceCodeFile({
-      extension: 'js',
-      content: `
-const default => {
-
-}
-`,
-    });
-
-    await expect(
-      extractSourceCodeFileTranslations(sourceCodeFilePath, TestBabelOptions),
-    ).rejects.toThrowError(
-      /Error while attempting to extract Docusaurus translations from source code file at path/,
-    );
-  });
-
-  test('extract nothing from untranslated source code', async () => {
-    const {sourceCodeFilePath} = await createTmpSourceCodeFile({
-      extension: 'js',
-      content: `
-const unrelated =  42;
-`,
-    });
-
-    const sourceCodeFileTranslations = await extractSourceCodeFileTranslations(
-      sourceCodeFilePath,
-      TestBabelOptions,
-    );
-
-    expect(sourceCodeFileTranslations).toEqual({
-      sourceCodeFilePath,
-      translations: {},
-      warnings: [],
-    });
-  });
-
-  test('extract from a translate() functions calls', async () => {
-    const {sourceCodeFilePath} = await createTmpSourceCodeFile({
-      extension: 'js',
-      content: `
-export default function MyComponent() {
-  return (
-    <div>
-      <input text={translate({id: 'codeId',message: 'code message',description: 'code description'})}/>
-
-      <input text={translate({id: 'codeId1'})}/>
-    </div>
-  );
-}
-`,
-    });
-
-    const sourceCodeFileTranslations = await extractSourceCodeFileTranslations(
-      sourceCodeFilePath,
-      TestBabelOptions,
-    );
-
-    expect(sourceCodeFileTranslations).toEqual({
-      sourceCodeFilePath,
-      translations: {
-        codeId: {message: 'code message', description: 'code description'},
-        codeId1: {message: 'codeId1'},
-      },
-      warnings: [],
-    });
-  });
-
-  test('extract from a <Translate> components', async () => {
-    const {sourceCodeFilePath} = await createTmpSourceCodeFile({
-      extension: 'js',
-      content: `
-export default function MyComponent() {
-  return (
-    <div>
-      <Translate id="codeId" description={"code description"}>
-        code message
-      </Translate>
-
-      <Translate id="codeId1" />
-    </div>
-  );
-}
-`,
-    });
-
-    const sourceCodeFileTranslations = await extractSourceCodeFileTranslations(
-      sourceCodeFilePath,
-      TestBabelOptions,
-    );
-
-    expect(sourceCodeFileTranslations).toEqual({
-      sourceCodeFilePath,
-      translations: {
-        codeId: {message: 'code message', description: 'code description'},
-        codeId1: {message: 'codeId1'},
-      },
-      warnings: [],
-    });
-  });
-
-  test('extract statically evaluable content', async () => {
-    const {sourceCodeFilePath} = await createTmpSourceCodeFile({
-      extension: 'js',
-      content: `
-const prefix = "prefix ";
-
-export default function MyComponent() {
-  return (
-    <div>
-      <input
-        text={translate({
-          id: prefix + 'codeId fn',
-          message: prefix + 'code message',
-          description: prefix + 'code description'}
-        )}
-      />
-      <Translate
-        id={prefix + "codeId comp"}
-        description={prefix + "code description"}
-      >
-      {prefix + "code message"}
-      </Translate>
-      <Translate>
-
-        {
-
-          prefix + \`Static template literal with unusual formatting!\`
-        }
-      </Translate>
-    </div>
-  );
-}
-`,
-    });
-
-    const sourceCodeFileTranslations = await extractSourceCodeFileTranslations(
-      sourceCodeFilePath,
-      TestBabelOptions,
-    );
-
-    expect(sourceCodeFileTranslations).toEqual({
-      sourceCodeFilePath,
-      translations: {
-        'prefix codeId comp': {
-          message: 'prefix code message',
-          description: 'prefix code description',
-        },
-        'prefix codeId fn': {
-          message: 'prefix code message',
-          description: 'prefix code description',
-        },
-        'prefix Static template literal with unusual formatting!': {
-          message: 'prefix Static template literal with unusual formatting!',
-        },
-      },
-      warnings: [],
-    });
-  });
-
-  test('extract from TypeScript file', async () => {
-    const {sourceCodeFilePath} = await createTmpSourceCodeFile({
-      extension: 'tsx',
-      content: `
-type ComponentProps<T> = {toto: string}
-
-export default function MyComponent<T>(props: ComponentProps<T>) {
-  return (
-    <div>
-      <input text={translate({id: 'codeId',message: 'code message',description: 'code description'}) as string}/>
-    </div>
-  );
-}
-`,
-    });
-
-    const sourceCodeFileTranslations = await extractSourceCodeFileTranslations(
-      sourceCodeFilePath,
-      TestBabelOptions,
-    );
-
-    expect(sourceCodeFileTranslations).toEqual({
-      sourceCodeFilePath,
-      translations: {
-        codeId: {message: 'code message', description: 'code description'},
-      },
-      warnings: [],
-    });
-  });
-});
-
 describe('extractSiteSourceCodeTranslations', () => {
-  test('should extract translation from all plugins source code', async () => {
+  it('extracts translation from all plugins source code', async () => {
     const siteDir = await createTmpDir();
 
     const siteComponentFile1 = path.join(
@@ -247,10 +29,11 @@ describe('extractSiteSourceCodeTranslations', () => {
       SRC_DIR_NAME,
       'site-component-1.jsx',
     );
-    await fs.ensureDir(path.dirname(siteComponentFile1));
-    await fs.writeFile(
+    await fs.outputFile(
       siteComponentFile1,
       `
+import Translate from '@docusaurus/Translate';
+
 export default function MySiteComponent1() {
   return (
       <Translate
@@ -279,10 +62,11 @@ export default function MySiteComponent1() {
 
     const plugin1Dir = await createTmpDir();
     const plugin1File1 = path.join(plugin1Dir, 'subpath', 'file1.jsx');
-    await fs.ensureDir(path.dirname(plugin1File1));
-    await fs.writeFile(
+    await fs.outputFile(
       plugin1File1,
       `
+import {translate} from '@docusaurus/Translate';
+
 export default function MyComponent() {
   return (
     <div>
@@ -297,10 +81,11 @@ export default function MyComponent() {
 `,
     );
     const plugin1File2 = path.join(plugin1Dir, 'src', 'theme', 'file2.jsx');
-    await fs.ensureDir(path.dirname(plugin1File2));
-    await fs.writeFile(
+    await fs.outputFile(
       plugin1File2,
       `
+import {translate} from '@docusaurus/Translate';
+
 export default function MyComponent() {
   return (
     <div>
@@ -312,11 +97,12 @@ export default function MyComponent() {
     );
 
     // This one should not be found! On purpose!
-    const plugin1File3 = path.join(plugin1Dir, 'unscannedFolder', 'file3.jsx');
-    await fs.ensureDir(path.dirname(plugin1File3));
-    await fs.writeFile(
+    const plugin1File3 = path.join(plugin1Dir, 'ignoredFolder', 'file3.jsx');
+    await fs.outputFile(
       plugin1File3,
       `
+import {translate} from '@docusaurus/Translate';
+
 export default function MyComponent() {
   return (
     <div>
@@ -326,14 +112,35 @@ export default function MyComponent() {
 }
 `,
     );
+
+    const plugin1File4 = path.join(plugin1Dir, 'src/theme/file4.jsx');
+    // Contains some invalid translations...
+    await fs.outputFile(
+      plugin1File4,
+      `
+import {translate} from '@docusaurus/Translate';
+
+export default function MyComponent() {
+  return (
+    <div>
+      <input text={translate({id: index})}/>
+    </div>
+  );
+}
+`,
+    );
+    const consoleWarnMock = jest
+      .spyOn(console, 'warn')
+      .mockImplementation(() => {});
     const plugin1 = createTestPlugin(plugin1Dir);
 
     const plugin2Dir = await createTmpDir();
     const plugin2File = path.join(plugin1Dir, 'subpath', 'file.tsx');
-    await fs.ensureDir(path.dirname(plugin2File));
-    await fs.writeFile(
+    await fs.outputFile(
       plugin2File,
       `
+import Translate, {translate} from '@docusaurus/Translate';
+
 type Props = {hey: string};
 
 export default function MyComponent(props: Props) {
@@ -353,12 +160,15 @@ export default function MyComponent(props: Props) {
     );
     const plugin2 = createTestPlugin(plugin2Dir);
 
-    const plugins = [plugin1, plugin2];
-    const translations = await extractSiteSourceCodeTranslations(
+    const plugins = [
+      plugin1,
+      plugin2,
+      {name: 'dummy', options: {}, version: {type: 'synthetic'}} as const,
+    ] as LoadedPlugin[];
+    const translations = await extractSiteSourceCodeTranslations({
       siteDir,
       plugins,
-      TestBabelOptions,
-    );
+    });
     expect(translations).toEqual({
       siteComponentFileId1: {
         description: 'site component 1 desc',
@@ -381,5 +191,8 @@ export default function MyComponent(props: Props) {
         message: 'plugin2 message 2',
       },
     });
+    expect(consoleWarnMock.mock.calls[0]![0]).toMatch(
+      /.*\[WARNING\].* Translation extraction warnings for file .*src.theme.file4\.jsx.*\n.*- translate\(\) first arg should be a statically evaluable object\./,
+    );
   });
 });

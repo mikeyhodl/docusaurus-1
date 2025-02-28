@@ -5,25 +5,38 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import {validate} from 'webpack';
+import {jest} from '@jest/globals';
+import webpack from 'webpack';
 
 import createServerConfig from '../server';
-import loadSetup from '../../server/loadSetup';
+import {loadSetup} from '../../server/__tests__/testUtils';
+import {createConfigureWebpackUtils} from '../configure';
+import {DEFAULT_FUTURE_CONFIG} from '../../server/configValidation';
+
+function createTestConfigureWebpackUtils() {
+  return createConfigureWebpackUtils({
+    siteConfig: {webpack: {jsLoader: 'babel'}, future: DEFAULT_FUTURE_CONFIG},
+  });
+}
 
 describe('webpack production config', () => {
-  test('simple', async () => {
-    console.log = jest.fn();
-    const props = await loadSetup('simple');
-    const config = createServerConfig({props});
-    const errors = validate(config);
-    expect(errors).toBeUndefined();
+  it('simple', async () => {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    const {props} = await loadSetup('simple-site');
+    const {config} = await createServerConfig({
+      props,
+      configureWebpackUtils: await createTestConfigureWebpackUtils(),
+    });
+    webpack.validate(config);
   });
 
-  test('custom', async () => {
-    console.log = jest.fn();
-    const props = await loadSetup('custom');
-    const config = createServerConfig({props});
-    const errors = validate(config);
-    expect(errors).toBeUndefined();
+  it('custom', async () => {
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+    const {props} = await loadSetup('custom-site');
+    const {config} = await createServerConfig({
+      props,
+      configureWebpackUtils: await createTestConfigureWebpackUtils(),
+    });
+    webpack.validate(config);
   });
 });

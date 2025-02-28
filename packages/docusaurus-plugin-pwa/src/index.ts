@@ -5,20 +5,21 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+import path from 'path';
+import {type Configuration} from 'webpack';
+import {
+  compile,
+  getProgressBarPlugin,
+  getMinimizers,
+} from '@docusaurus/bundler';
+import {injectManifest} from 'workbox-build';
+import {normalizeUrl} from '@docusaurus/utils';
+import logger from '@docusaurus/logger';
+import {readDefaultCodeTranslationMessages} from '@docusaurus/theme-translations';
 import type {HtmlTags, LoadContext, Plugin} from '@docusaurus/types';
 import type {PluginOptions} from '@docusaurus/plugin-pwa';
-import {normalizeUrl} from '@docusaurus/utils';
-import {compile} from '@docusaurus/core/lib/webpack/utils';
-import LogPlugin from '@docusaurus/core/lib/webpack/plugins/LogPlugin';
-import {readDefaultCodeTranslationMessages} from '@docusaurus/theme-translations';
 
-import path from 'path';
-import webpack, {Configuration} from 'webpack';
-import Terser from 'terser-webpack-plugin';
-
-import {injectManifest} from 'workbox-build';
-
-const isProd = process.env.NODE_ENV === 'production';
+const PluginName = 'docusaurus-plugin-pwa';
 
 function getSWBabelLoader() {
   return {
@@ -32,24 +33,29 @@ function getSWBabelLoader() {
           {
             useBuiltIns: 'entry',
             corejs: '3',
-            // See https://twitter.com/jeffposnick/status/1280223070876315649
+            // See https://x.com/jeffposnick/status/1280223070876315649
             targets: 'chrome >= 56',
           },
         ],
-      ],
-      plugins: [
-        require.resolve('@babel/plugin-proposal-object-rest-spread'),
-        require.resolve('@babel/plugin-proposal-optional-chaining'),
-        require.resolve('@babel/plugin-proposal-nullish-coalescing-operator'),
       ],
     },
   };
 }
 
-export default function (
+export default function pluginPWA(
   context: LoadContext,
   options: PluginOptions,
-): Plugin<void> {
+): Plugin<void> | null {
+  if (process.env.NODE_ENV !== 'production') {
+    return null;
+  }
+  if (context.siteConfig.future.experimental_router === 'hash') {
+    logger.warn(
+      `${PluginName} does not support the Hash Router and will be disabled.`,
+    );
+    return null;
+  }
+
   const {
     outDir,
     baseUrl,
@@ -59,21 +65,23 @@ export default function (
     debug,
     offlineModeActivationStrategies,
     injectManifestConfig,
-    reloadPopup,
     pwaHead,
     swCustom,
     swRegister,
   } = options;
 
   return {
-    name: 'docusaurus-plugin-pwa',
+    name: PluginName,
 
     getThemePath() {
-      return path.resolve(__dirname, './theme');
+      return '../lib/theme';
+    },
+    getTypeScriptThemePath() {
+      return '../src/theme';
     },
 
     getClientModules() {
-      return isProd ? [swRegister] : [];
+      return swRegister ? [swRegister] : [];
     },
 
     getDefaultCodeTranslationMessages() {
@@ -83,22 +91,17 @@ export default function (
       });
     },
 
-    configureWebpack(config) {
-      if (!isProd) {
-        return {};
-      }
-
+    configureWebpack(config, isServer, {currentBundler}) {
       return {
         plugins: [
-          new webpack.EnvironmentPlugin({
+          new currentBundler.instance.EnvironmentPlugin({
             PWA_DEBUG: debug,
             PWA_SERVICE_WORKER_URL: path.posix.resolve(
-              `${config.output?.publicPath || '/'}`,
+              `${(config.output?.publicPath as string) || '/'}`,
               'sw.js',
             ),
             PWA_OFFLINE_MODE_ACTIVATION_STRATEGIES:
               offlineModeActivationStrategies,
-            PWA_RELOAD_POPUP: reloadPopup,
           }),
         ],
       };
@@ -106,41 +109,39 @@ export default function (
 
     injectHtmlTags() {
       const headTags: HtmlTags = [];
-      if (isProd && pwaHead) {
-        pwaHead.forEach(({tagName, ...attributes}) => {
-          (['href', 'content'] as const).forEach((attribute) => {
-            const attributeValue = attributes[attribute];
+      pwaHead.forEach(({tagName, ...attributes}) => {
+        (['href', 'content'] as const).forEach((attribute) => {
+          const attributeValue = attributes[attribute];
 
-            if (!attributeValue) {
-              return;
-            }
+          if (!attributeValue) {
+            return;
+          }
 
-            const attributePath =
-              !!path.extname(attributeValue) && attributeValue;
+          const attributePath =
+            !!path.extname(attributeValue) && attributeValue;
 
-            if (attributePath && !attributePath.startsWith(baseUrl)) {
-              attributes[attribute] = normalizeUrl([baseUrl, attributeValue]);
-            }
-          });
-
-          return headTags.push({
-            tagName,
-            attributes,
-          });
+          if (attributePath && !attributePath.startsWith(baseUrl)) {
+            attributes[attribute] = normalizeUrl([baseUrl, attributeValue]);
+          }
         });
-      }
+
+        return headTags.push({
+          tagName,
+          attributes,
+        });
+      });
       return {headTags};
     },
 
     async postBuild(props) {
-      if (!isProd) {
-        return;
-      }
-
       const swSourceFileTest = /\.m?js$/;
 
+      const ProgressBarPlugin = await getProgressBarPlugin({
+        currentBundler: props.currentBundler,
+      });
+
       const swWebpackConfig: Configuration = {
-        entry: path.resolve(__dirname, 'sw.js'),
+        entry: require.resolve('./sw.js'),
         output: {
           path: outDir,
           filename: 'sw.js',
@@ -152,20 +153,20 @@ export default function (
         optimization: {
           splitChunks: false,
           minimize: !debug,
-          // see https://developers.google.com/web/tools/workbox/guides/using-bundlers#webpack
+          // See https://developers.google.com/web/tools/workbox/guides/using-bundlers#webpack
           minimizer: debug
             ? []
-            : [
-                new Terser({
-                  test: swSourceFileTest,
-                }),
-              ],
+            : await getMinimizers({
+                faster: props.siteConfig.future.experimental_faster,
+                currentBundler: props.currentBundler,
+              }),
         },
         plugins: [
-          new webpack.EnvironmentPlugin({
-            PWA_SW_CUSTOM: swCustom || '', // fallback value required with Webpack 5
+          new props.currentBundler.instance.EnvironmentPlugin({
+            // Fallback value required with Webpack 5
+            PWA_SW_CUSTOM: swCustom ?? '',
           }),
-          new LogPlugin({
+          new ProgressBarPlugin({
             name: 'Service Worker',
             color: 'red',
           }),
@@ -174,14 +175,17 @@ export default function (
           rules: [
             {
               test: swSourceFileTest,
-              exclude: /(node_modules)/,
+              exclude: /node_modules/,
               use: getSWBabelLoader(),
             },
           ],
         },
       };
 
-      await compile([swWebpackConfig]);
+      await compile({
+        configs: [swWebpackConfig],
+        currentBundler: props.currentBundler,
+      });
 
       const swDest = path.resolve(props.outDir, 'sw.js');
 
@@ -191,11 +195,10 @@ export default function (
           '**/*.{js,json,css,html}',
           '**/*.{png,jpg,jpeg,gif,svg,ico}',
           '**/*.{woff,woff2,eot,ttf,otf}',
-          // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-          // @ts-ignore
-          ...(injectManifest.globPatterns || []),
+          // @ts-expect-error: internal API?
+          ...((injectManifest.globPatterns as string[] | undefined) ?? []),
         ],
-        // those attributes are not overrideable
+        // Those attributes are not overrideable
         swDest,
         swSrc: swDest,
         globDirectory: props.outDir,

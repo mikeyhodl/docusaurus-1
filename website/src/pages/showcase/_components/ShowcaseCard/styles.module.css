@@ -37,12 +37,8 @@
 }
 
 .showcaseCardTitle,
-.showcaseCardHeader .svgIconFavorite {
+.showcaseCardHeader {
   margin-right: 0.25rem;
-}
-
-.showcaseCardHeader .svgIconFavorite {
-  color: var(--site-color-svgIcon-favorite);
 }
 
 .showcaseCardSrcBtn {
@@ -52,17 +48,17 @@
   border: none;
 }
 
-html[data-theme='dark'] .showcaseCardSrcBtn {
+.showcaseCardSrcBtn:focus-visible {
+  background-color: var(--ifm-color-secondary-dark);
+}
+
+[data-theme='dark'] .showcaseCardSrcBtn {
   background-color: var(--ifm-color-emphasis-200) !important;
   color: inherit;
 }
 
-html[data-theme='dark'] .showcaseCardSrcBtn:hover {
+[data-theme='dark'] .showcaseCardSrcBtn:hover {
   background-color: var(--ifm-color-emphasis-300) !important;
-}
-
-.showcaseCardSrcBtn:focus-visible {
-  background-color: var(--ifm-color-secondary-dark);
 }
 
 .showcaseCardBody {

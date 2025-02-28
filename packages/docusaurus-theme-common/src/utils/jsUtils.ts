@@ -10,8 +10,11 @@
 /**
  * Gets the duplicate values in an array.
  * @param arr The array.
- * @param comparator Compares two values and returns `true` if they are equal (duplicated).
- * @returns Value of the elements `v` that have a preceding element `u` where `comparator(u, v) === true`. Values within the returned array are not guaranteed to be unique.
+ * @param comparator Compares two values and returns `true` if they are equal
+ * (duplicated).
+ * @returns Value of the elements `v` that have a preceding element `u` where
+ * `comparator(u, v) === true`. Values within the returned array are not
+ * guaranteed to be unique.
  */
 export function duplicates<T>(
   arr: readonly T[],
@@ -23,11 +26,29 @@ export function duplicates<T>(
 }
 
 /**
- * Remove duplicate array items (similar to _.uniq)
+ * Remove duplicate array items (similar to `_.uniq`)
  * @param arr The array.
  * @returns An array with duplicate elements removed by reference comparison.
  */
 export function uniq<T>(arr: T[]): T[] {
   // Note: had problems with [...new Set()]: https://github.com/facebook/docusaurus/issues/4972#issuecomment-863895061
   return Array.from(new Set(arr));
+}
+
+// TODO 2025: replace by std Object.groupBy ?
+// This is a local polyfill with exact same TS signature
+// see https://github.com/microsoft/TypeScript/blob/main/src/lib/esnext.object.d.ts
+export function groupBy<K extends PropertyKey, T>(
+  items: Iterable<T>,
+  keySelector: (item: T, index: number) => K,
+): Partial<Record<K, T[]>> {
+  const result: Partial<Record<K, T[]>> = {};
+  let index = 0;
+  for (const item of items) {
+    const key = keySelector(item, index);
+    result[key] ??= [];
+    result[key]!.push(item);
+    index += 1;
+  }
+  return result;
 }

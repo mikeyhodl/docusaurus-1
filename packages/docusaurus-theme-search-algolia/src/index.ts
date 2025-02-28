@@ -5,57 +5,35 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import path from 'path';
-import fs from 'fs';
-import {defaultConfig, compile} from 'eta';
-import {normalizeUrl, getSwizzledComponent} from '@docusaurus/utils';
+import {normalizeUrl} from '@docusaurus/utils';
 import {readDefaultCodeTranslationMessages} from '@docusaurus/theme-translations';
-import openSearchTemplate from './templates/opensearch';
-import {memoize} from 'lodash';
+import {
+  createOpenSearchFile,
+  createOpenSearchHeadTags,
+  shouldCreateOpenSearchFile,
+} from './opensearch';
 
-import type {DocusaurusContext, Plugin} from '@docusaurus/types';
+import type {LoadContext, Plugin} from '@docusaurus/types';
+import type {ThemeConfig} from '@docusaurus/theme-search-algolia';
 
-const getCompiledOpenSearchTemplate = memoize(() =>
-  compile(openSearchTemplate.trim()),
-);
-
-function renderOpenSearchTemplate(data: {
-  title: string;
-  url: string;
-  favicon: string | null;
-}) {
-  const compiled = getCompiledOpenSearchTemplate();
-  return compiled(data, defaultConfig);
-}
-
-const OPEN_SEARCH_FILENAME = 'opensearch.xml';
-
-export default function theme(
-  context: DocusaurusContext & {baseUrl: string},
-): Plugin<void> {
+export default function themeSearchAlgolia(context: LoadContext): Plugin<void> {
   const {
     baseUrl,
-    siteConfig: {title, url, favicon},
+    siteConfig: {themeConfig},
     i18n: {currentLocale},
   } = context;
-  const pageComponent = './theme/SearchPage/index.js';
-  const pagePath =
-    getSwizzledComponent(pageComponent) ||
-    path.resolve(__dirname, pageComponent);
+  const {
+    algolia: {searchPagePath},
+  } = themeConfig as ThemeConfig;
 
   return {
     name: 'docusaurus-theme-search-algolia',
 
-    getPathsToWatch() {
-      return [pagePath];
-    },
-
     getThemePath() {
-      return path.resolve(__dirname, './theme');
+      return '../lib/theme';
     },
-
     getTypeScriptThemePath() {
-      return path.resolve(__dirname, '..', 'src', 'theme');
+      return '../src/theme';
     },
 
     getDefaultCodeTranslationMessages() {
@@ -65,44 +43,27 @@ export default function theme(
       });
     },
 
-    async contentLoaded({actions: {addRoute}}) {
-      addRoute({
-        path: normalizeUrl([baseUrl, 'search']),
-        component: pagePath,
-        exact: true,
-      });
+    contentLoaded({actions: {addRoute}}) {
+      if (searchPagePath) {
+        addRoute({
+          path: normalizeUrl([baseUrl, searchPagePath]),
+          component: '@theme/SearchPage',
+          exact: true,
+        });
+      }
     },
 
-    async postBuild({outDir}) {
-      try {
-        fs.writeFileSync(
-          path.join(outDir, OPEN_SEARCH_FILENAME),
-          renderOpenSearchTemplate({
-            title,
-            url: url + baseUrl,
-            favicon: favicon ? normalizeUrl([url, baseUrl, favicon]) : null,
-          }),
-        );
-      } catch (err) {
-        console.error(err);
-        throw new Error(`Generating OpenSearch file failed: ${err}`);
+    async postBuild() {
+      if (shouldCreateOpenSearchFile({context})) {
+        await createOpenSearchFile({context});
       }
     },
 
     injectHtmlTags() {
-      return {
-        headTags: [
-          {
-            tagName: 'link',
-            attributes: {
-              rel: 'search',
-              type: 'application/opensearchdescription+xml',
-              title,
-              href: normalizeUrl([baseUrl, OPEN_SEARCH_FILENAME]),
-            },
-          },
-        ],
-      };
+      if (shouldCreateOpenSearchFile({context})) {
+        return {headTags: createOpenSearchHeadTags({context})};
+      }
+      return {};
     },
   };
 }

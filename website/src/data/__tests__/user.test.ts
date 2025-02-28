@@ -5,163 +5,161 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import {TagList, User, sortedUsers} from '../users';
-import {difference} from '@site/src/utils/jsUtils';
-
 import fs from 'fs-extra';
 import path from 'path';
+import _ from 'lodash';
 import imageSize from 'image-size';
+import {Joi} from '@docusaurus/utils-validation';
+import {TagList, sortedUsers, type User} from '../users';
 
-describe('users', () => {
-  test('are valid', () => {
-    sortedUsers.forEach(ensureUserValid);
+declare global {
+  namespace jest {
+    interface Matchers<R> {
+      toHaveGoodDimensions: () => R;
+    }
+  }
+}
+
+expect.extend({
+  toHaveGoodDimensions({width, height}: {width: number; height: number}) {
+    // Put this one first because aspect ratio is harder to fix than resizing
+    // (need to take another screenshot)
+    if (width / height > 2) {
+      return {
+        pass: false,
+        message: () =>
+          `The preview image's width is ${width} and height is ${height}. To make sure it takes up the entire container in our showcase card, it needs to have an aspect ratio of no wider than 2:1. Please make your image taller.`,
+      };
+    } else if (width < 640) {
+      return {
+        pass: false,
+        message: () =>
+          `The preview image's width is ${width}, but we require a minimum 640. You can either resize it locally, or you can wait for the maintainer to resize it for you.`,
+      };
+    }
+    return {
+      pass: true,
+      message: () => "The preview image's dimensions are good",
+    };
+  },
+});
+
+describe('users data', () => {
+  it.each(sortedUsers)('$title', (user) => {
+    Joi.attempt(
+      user,
+      Joi.object<User>({
+        title: Joi.string().required(),
+        description: Joi.string()
+          .required()
+          .max(120)
+          .message(
+            'Please constrain your description text to maximum 120 characters.',
+          ),
+        website: Joi.string()
+          .pattern(/^https?:\/\//)
+          .message('')
+          .required(),
+        // The preview should be jest/emptyModule
+        preview: Joi.object({default: Joi.any()})
+          .unknown(false)
+          .allow(null)
+          .required()
+          .messages({
+            'object.base':
+              'The image should be hosted on Docusaurus site, and not use remote HTTP or HTTPS URLs. It must be imported with require().',
+          }),
+        tags: Joi.array()
+          .items(...TagList)
+          .required(),
+        source: Joi.string().allow(null).required().messages({
+          'any.required':
+            "The source attribute is required.\nIf your Docusaurus site is not open-source, please make it explicit with 'source: null'.",
+        }),
+      }).unknown(false),
+    );
+    // cSpell:ignore opensource
+    if (user.tags.includes('opensource') && user.source === null) {
+      throw new Error(
+        "You can't add the 'opensource' tag to a site that does not have a link to source code. Please add your source code, or remove this tag.",
+      );
+    } else if (user.source !== null && !user.tags.includes('opensource')) {
+      throw new Error(
+        "For open-source sites, please add the 'opensource' tag.",
+      );
+    }
   });
 
-  test('have valid images', async () => {
-    const minCardImageWidth = 304;
-    const minCardImageHeight = 150;
-    const minCardImageHeightScaled = 140;
-    const imageDir = path.join(__dirname, '../showcase');
-
-    const files = await fs.readdir(imageDir);
-
-    // eslint-disable-next-line no-restricted-syntax
-    for (const file of files) {
-      const size = imageSize(path.join(imageDir, file));
-
-      if (size.width! < minCardImageWidth) {
-        throw new Error(
-          `Image width should be >= ${minCardImageWidth}
-Image=${file}`,
-        );
+  it('does not contain duplicates', () => {
+    function normalizeUrl(url: string | null) {
+      if (url === null) {
+        return null;
       }
-      if (size.height! < minCardImageHeight) {
-        throw new Error(
-          `Image height should be >= ${minCardImageHeight}
-Image=${file}`,
-        );
+      if (!url.endsWith('/')) {
+        return `${url}/`;
       }
+      return url;
+    }
 
-      const scaledHeight = size.height! / (size.width! / minCardImageWidth);
-      if (scaledHeight < minCardImageHeightScaled) {
-        throw new Error(
-          `Image height is too small compared to width
-After downscaling to width=${minCardImageWidth}, height would be ${scaledHeight} while the minimum is ${minCardImageHeightScaled}
-Image=${file}`,
-        );
+    function duplicatesBy(mapper: (user: User) => string | null) {
+      const grouped: {[key: string]: User[]} = _.groupBy(sortedUsers, (user) =>
+        mapper(user),
+      );
+      return Object.fromEntries(
+        Object.entries(grouped).filter((entry) => entry[1].length > 1),
+      );
+    }
+
+    let duplicatesLog = '';
+
+    const duplicatesByTitle = duplicatesBy((user) =>
+      user.title.trim().toLowerCase(),
+    );
+    Object.entries(duplicatesByTitle).forEach(([title, users]) => {
+      duplicatesLog += `Showcase site title '${title}' is used ${users.length} times! Duplicates are not allowed!\n`;
+    });
+
+    const duplicatesByDescription = duplicatesBy((user) =>
+      user.description.trim().toLowerCase(),
+    );
+    Object.entries(duplicatesByDescription).forEach(([description, users]) => {
+      duplicatesLog += `Showcase site description '${description}' is used ${users.length} times! Duplicates are not allowed!\n`;
+    });
+
+    const duplicatesByWebsite = duplicatesBy((user) =>
+      normalizeUrl(user.website),
+    );
+    Object.entries(duplicatesByWebsite).forEach(([website, users]) => {
+      duplicatesLog += `Showcase site website url '${website}' is used ${users.length} times! Duplicates are not allowed!\n`;
+    });
+
+    const duplicatesBySource = duplicatesBy((user) =>
+      normalizeUrl(user.source),
+    );
+    Object.entries(duplicatesBySource).forEach(([source, users]) => {
+      // source is allowed to be null for multiple sites
+      // "null", see Lodash groupBy issue: https://github.com/lodash/lodash/issues/3060
+      if (source && source !== 'null') {
+        duplicatesLog += `Showcase site source url '${source}' is used ${users.length} times! Duplicates are not allowed!\n`;
       }
+    });
+
+    if (duplicatesLog) {
+      throw new Error(duplicatesLog);
     }
   });
 });
 
-// TODO, refactor legacy test code
-// Fail-fast on common errors
-function ensureUserValid(user: User) {
-  function checkFields() {
-    const keys = Object.keys(user);
-    const validKeys = [
-      'title',
-      'description',
-      'preview',
-      'website',
-      'source',
-      'tags',
-    ];
-    const unknownKeys = difference(keys, validKeys);
-    if (unknownKeys.length > 0) {
-      throw new Error(
-        `Site contains unknown attribute names=[${unknownKeys.join(',')}]`,
-      );
-    }
-  }
+describe('preview images', () => {
+  const imageDir = path.join(__dirname, '../showcase');
+  // eslint-disable-next-line no-restricted-properties
+  const files = fs
+    .readdirSync(imageDir)
+    .filter((file) => ['.png', 'jpg', '.jpeg'].includes(path.extname(file)));
 
-  function checkTitle() {
-    if (!user.title) {
-      throw new Error('Site title is missing');
-    }
-  }
+  it.each(files)('%s', (file) => {
+    const size = imageSize(path.join(imageDir, file));
 
-  function checkDescription() {
-    if (!user.description) {
-      throw new Error('Site description is missing');
-    }
-  }
-
-  function checkWebsite() {
-    if (!user.website) {
-      throw new Error('Site website is missing');
-    }
-    const isHttpUrl =
-      user.website.startsWith('http://') || user.website.startsWith('https://');
-    if (!isHttpUrl) {
-      throw new Error(
-        `Site website does not look like a valid url: ${user.website}`,
-      );
-    }
-  }
-
-  function checkPreview() {
-    if (
-      !user.preview ||
-      (user.preview instanceof String &&
-        (user.preview.startsWith('http') || user.preview.startsWith('//')))
-    ) {
-      throw new Error(
-        `Site has bad image preview=[${user.preview}].\nThe image should be hosted on Docusaurus site, and not use remote HTTP or HTTPS URLs`,
-      );
-    }
-  }
-
-  function checkTags() {
-    if (
-      !user.tags ||
-      !(user.tags instanceof Array) ||
-      (user.tags as string[]).includes('')
-    ) {
-      throw new Error(`Bad showcase tags=[${JSON.stringify(user.tags)}]`);
-    }
-    const unknownTags = difference(user.tags, TagList);
-    if (unknownTags.length > 0) {
-      throw new Error(
-        `Unknown tags=[${unknownTags.join(
-          ',',
-        )}\nThe available tags are ${TagList.join(',')}`,
-      );
-    }
-  }
-
-  function checkOpenSource() {
-    if (typeof user.source === 'undefined') {
-      throw new Error(
-        "The source attribute is required.\nIf your Docusaurus site is not open-source, please make it explicit with 'source: null'",
-      );
-    } else {
-      const hasOpenSourceTag = user.tags.includes('opensource');
-      if (user.source === null && hasOpenSourceTag) {
-        throw new Error(
-          "You can't add the opensource tag to a site that does not have a link to source code.",
-        );
-      } else if (user.source && !hasOpenSourceTag) {
-        throw new Error(
-          "For open-source sites, please add the 'opensource' tag",
-        );
-      }
-    }
-  }
-
-  try {
-    checkFields();
-    checkTitle();
-    checkDescription();
-    checkWebsite();
-    checkPreview();
-    checkTags();
-    checkOpenSource();
-  } catch (e) {
-    throw new Error(
-      `Showcase site with title=${user.title} contains errors:\n${
-        (e as Error).message
-      }`,
-    );
-  }
-}
+    expect(size).toHaveGoodDimensions();
+  });
+});

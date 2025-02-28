@@ -1,14 +1,14 @@
 {
   "name": "@docusaurus/plugin-pwa",
-  "version": "2.0.0-beta.9",
+  "version": "3.7.0",
   "description": "Docusaurus Plugin to add PWA support.",
   "main": "lib/index.js",
   "types": "src/plugin-pwa.d.ts",
   "scripts": {
-    "build": "yarn build:server && yarn build:browser && yarn build:copy",
-    "build:server": "tsc --project tsconfig.server.json",
-    "build:browser": "tsc --project tsconfig.browser.json",
-    "build:copy": "node copyUntypedFiles.js"
+    "build": "tsc --build && node ../../admin/scripts/copyUntypedFiles.js && prettier --config ../../.prettierrc --write \"lib/theme/**/*.js\"",
+    "watch": "run-p -c copy:watch build:watch",
+    "build:watch": "tsc --build --watch",
+    "copy:watch": "node ../../admin/scripts/copyUntypedFiles.js --watch"
   },
   "publishConfig": {
     "access": "public"
@@ -20,31 +20,35 @@
   },
   "license": "MIT",
   "dependencies": {
-    "@babel/plugin-proposal-nullish-coalescing-operator": "^7.16.0",
-    "@babel/plugin-proposal-optional-chaining": "^7.16.0",
-    "@babel/preset-env": "^7.16.4",
-    "@docusaurus/core": "2.0.0-beta.9",
-    "@docusaurus/theme-common": "2.0.0-beta.9",
-    "@docusaurus/theme-translations": "2.0.0-beta.9",
-    "@docusaurus/utils": "2.0.0-beta.9",
-    "@docusaurus/utils-validation": "2.0.0-beta.9",
-    "babel-loader": "^8.2.2",
-    "clsx": "^1.1.1",
-    "core-js": "^3.18.0",
-    "terser-webpack-plugin": "^5.2.4",
-    "webpack": "^5.61.0",
-    "webpack-merge": "^5.7.3",
-    "workbox-build": "^6.1.1",
-    "workbox-precaching": "^6.1.1",
-    "workbox-window": "^6.1.1"
+    "@babel/core": "^7.25.9",
+    "@babel/preset-env": "^7.25.9",
+    "@docusaurus/bundler": "3.7.0",
+    "@docusaurus/core": "3.7.0",
+    "@docusaurus/logger": "3.7.0",
+    "@docusaurus/theme-common": "3.7.0",
+    "@docusaurus/theme-translations": "3.7.0",
+    "@docusaurus/types": "3.7.0",
+    "@docusaurus/utils": "3.7.0",
+    "@docusaurus/utils-validation": "3.7.0",
+    "babel-loader": "^9.2.1",
+    "clsx": "^2.0.0",
+    "core-js": "^3.31.1",
+    "tslib": "^2.6.0",
+    "webpack": "^5.95.0",
+    "webpack-merge": "^5.9.0",
+    "workbox-build": "^7.0.0",
+    "workbox-precaching": "^7.0.0",
+    "workbox-window": "^7.0.0"
   },
   "devDependencies": {
-    "@docusaurus/module-type-aliases": "2.0.0-beta.9",
-    "fs-extra": "^10.0.0"
+    "@docusaurus/module-type-aliases": "3.7.0",
+    "fs-extra": "^11.1.0"
   },
   "peerDependencies": {
-    "@babel/core": "^7.0.0",
-    "react": "^16.8.4 || ^17.0.0",
-    "react-dom": "^16.8.4 || ^17.0.0"
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "engines": {
+    "node": ">=18.0"
   }
 }

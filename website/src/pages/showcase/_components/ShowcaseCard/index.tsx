@@ -5,25 +5,33 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import React, {memo} from 'react';
+import React from 'react';
 import clsx from 'clsx';
-import Image from '@theme/IdealImage';
 import Link from '@docusaurus/Link';
-
-import styles from './styles.module.css';
-import FavoriteIcon from '@site/src/components/svgIcons/FavoriteIcon';
-import Tooltip from '../ShowcaseTooltip';
-import {Tags, TagList, TagType, User, Tag} from '@site/src/data/users';
+import Translate from '@docusaurus/Translate';
+import Image from '@theme/IdealImage';
+import {Tags, TagList, type TagType, type User} from '@site/src/data/users';
 import {sortBy} from '@site/src/utils/jsUtils';
+import Heading from '@theme/Heading';
+import FavoriteIcon from '../FavoriteIcon';
+import styles from './styles.module.css';
 
-const TagComp = React.forwardRef<HTMLLIElement, Tag>(
-  ({label, color, description}, ref) => (
-    <li ref={ref} className={styles.tag} title={description}>
+function TagItem({
+  label,
+  description,
+  color,
+}: {
+  label: string;
+  description: string;
+  color: string;
+}) {
+  return (
+    <li className={styles.tag} title={description}>
       <span className={styles.textLabel}>{label.toLowerCase()}</span>
       <span className={styles.colorLabel} style={{backgroundColor: color}} />
     </li>
-  ),
-);
+  );
+}
 
 function ShowcaseCardTag({tags}: {tags: TagType[]}) {
   const tagObjects = tags.map((tag) => ({tag, ...Tags[tag]}));
@@ -36,54 +44,57 @@ function ShowcaseCardTag({tags}: {tags: TagType[]}) {
   return (
     <>
       {tagObjectsSorted.map((tagObject, index) => {
-        const id = `showcase_card_tag_${tagObject.tag}`;
-
-        return (
-          <Tooltip
-            key={index}
-            text={tagObject.description}
-            anchorEl="#__docusaurus"
-            id={id}>
-            <TagComp key={index} {...tagObject} />
-          </Tooltip>
-        );
+        return <TagItem key={index} {...tagObject} />;
       })}
     </>
   );
 }
 
-const ShowcaseCard = memo(({user}: {user: User}) => (
-  <li key={user.title} className="card shadow--md">
-    <div className={clsx('card__image', styles.showcaseCardImage)}>
-      <Image img={user.preview} alt={user.title} />
-    </div>
-    <div className="card__body">
-      <div className={clsx(styles.showcaseCardHeader)}>
-        <h4 className={styles.showcaseCardTitle}>
-          <Link href={user.website} className={styles.showcaseCardLink}>
-            {user.title}
-          </Link>
-        </h4>
-        {user.tags.includes('favorite') && (
-          <FavoriteIcon svgClass={styles.svgIconFavorite} size="small" />
-        )}
-        {user.source && (
-          <Link
-            href={user.source}
-            className={clsx(
-              'button button--secondary button--sm',
-              styles.showcaseCardSrcBtn,
-            )}>
-            source
-          </Link>
-        )}
-      </div>
-      <p className={styles.showcaseCardBody}>{user.description}</p>
-    </div>
-    <ul className={clsx('card__footer', styles.cardFooter)}>
-      <ShowcaseCardTag tags={user.tags} />
-    </ul>
-  </li>
-));
+function getCardImage(user: User): string {
+  return (
+    user.preview ??
+    // TODO make it configurable
+    `https://slorber-api-screenshot.netlify.app/${encodeURIComponent(
+      user.website,
+    )}/showcase`
+  );
+}
 
-export default ShowcaseCard;
+function ShowcaseCard({user}: {user: User}) {
+  const image = getCardImage(user);
+  return (
+    <li key={user.title} className="card shadow--md">
+      <div className={clsx('card__image', styles.showcaseCardImage)}>
+        <Image img={image} alt={user.title} />
+      </div>
+      <div className="card__body">
+        <div className={clsx(styles.showcaseCardHeader)}>
+          <Heading as="h4" className={styles.showcaseCardTitle}>
+            <Link href={user.website} className={styles.showcaseCardLink}>
+              {user.title}
+            </Link>
+          </Heading>
+          {user.tags.includes('favorite') && (
+            <FavoriteIcon size="medium" style={{marginRight: '0.25rem'}} />
+          )}
+          {user.source && (
+            <Link
+              href={user.source}
+              className={clsx(
+                'button button--secondary button--sm',
+                styles.showcaseCardSrcBtn,
+              )}>
+              <Translate id="showcase.card.sourceLink">source</Translate>
+            </Link>
+          )}
+        </div>
+        <p className={styles.showcaseCardBody}>{user.description}</p>
+      </div>
+      <ul className={clsx('card__footer', styles.cardFooter)}>
+        <ShowcaseCardTag tags={user.tags} />
+      </ul>
+    </li>
+  );
+}
+
+export default React.memo(ShowcaseCard);

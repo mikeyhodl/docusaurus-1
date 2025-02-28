@@ -5,12 +5,10 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import React from 'react';
-import {Helmet} from 'react-helmet';
-import type {HeadProps} from '@docusaurus/Head';
+import React, {type ReactNode} from 'react';
+import {Helmet} from 'react-helmet-async';
+import type {Props} from '@docusaurus/Head';
 
-function Head(props: HeadProps): JSX.Element {
+export default function Head(props: Props): ReactNode {
   return <Helmet {...props} />;
 }
-
-export default Head;

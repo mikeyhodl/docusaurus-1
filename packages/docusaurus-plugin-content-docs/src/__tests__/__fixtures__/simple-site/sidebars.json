@@ -4,11 +4,23 @@
       {
         "type": "category",
         "label": "foo",
-        "items": ["foo/bar", "foo/baz"]
+        "items": ["foo/bar", "doc-unlisted", "foo/baz"]
+      },
+      {
+        "type": "category",
+        "label": "Unlisted category",
+        "link": {
+          "type": "doc",
+          "id": "unlisted-category/unlisted-category-index"
+        },
+        "items": ["unlisted-category/unlisted-category-doc"]
       },
       {
         "type": "category",
         "label": "Slugs",
+        "link": {
+          "type": "generated-index"
+        },
         "items": [
           "rootAbsoluteSlug",
           "rootRelativeSlug",
@@ -22,7 +34,7 @@
       },
       {
         "type": "link",
-        "label": "Github",
+        "label": "GitHub",
         "href": "https://github.com"
       },
       {

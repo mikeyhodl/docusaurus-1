@@ -6,134 +6,64 @@
  */
 
 import path from 'path';
-import {loadContext} from '@docusaurus/core/lib/server';
+import {loadContext} from '@docusaurus/core/src/server/site';
+import {normalizePluginOptions} from '@docusaurus/utils-validation';
 
 import pluginContentPages from '../index';
-import normalizePluginOptions from './pluginOptionSchema.test';
+import {validateOptions} from '../options';
 
 describe('docusaurus-plugin-content-pages', () => {
-  test('simple pages', async () => {
+  it('loads simple pages', async () => {
     const siteDir = path.join(__dirname, '__fixtures__', 'website');
-    const context = await loadContext(siteDir);
-    const pluginPath = 'src/pages';
-    const plugin = pluginContentPages(
+    const context = await loadContext({siteDir});
+    const plugin = await pluginContentPages(
       context,
-      normalizePluginOptions({
-        path: pluginPath,
+      validateOptions({
+        validate: normalizePluginOptions,
+        options: {
+          path: 'src/pages',
+        },
       }),
     );
-    const pagesMetadata = await plugin.loadContent?.();
+    const pagesMetadata = await plugin.loadContent!();
 
-    expect(pagesMetadata).toEqual([
-      {
-        type: 'jsx',
-        permalink: '/',
-        source: path.posix.join('@site', pluginPath, 'index.js'),
-      },
-      {
-        type: 'jsx',
-        permalink: '/typescript',
-        source: path.posix.join('@site', pluginPath, 'typescript.tsx'),
-      },
-      {
-        type: 'mdx',
-        permalink: '/hello/',
-        source: path.posix.join('@site', pluginPath, 'hello', 'index.md'),
-      },
-      {
-        type: 'mdx',
-        permalink: '/hello/mdxPage',
-        source: path.posix.join('@site', pluginPath, 'hello', 'mdxPage.mdx'),
-      },
-      {
-        type: 'jsx',
-        permalink: '/hello/translatedJs',
-        source: path.posix.join(
-          '@site',
-          pluginPath,
-          'hello',
-          'translatedJs.js',
-        ),
-      },
-      {
-        type: 'mdx',
-        permalink: '/hello/translatedMd',
-        source: path.posix.join(
-          '@site',
-          pluginPath,
-          'hello',
-          'translatedMd.md',
-        ),
-      },
-      {
-        type: 'jsx',
-        permalink: '/hello/world',
-        source: path.posix.join('@site', pluginPath, 'hello', 'world.js'),
-      },
-    ]);
+    expect(pagesMetadata).toMatchSnapshot();
   });
 
-  test('simple pages with french translations', async () => {
+  it('loads simple pages with french translations', async () => {
     const siteDir = path.join(__dirname, '__fixtures__', 'website');
-    const context = await loadContext(siteDir);
-    const pluginPath = 'src/pages';
-    const plugin = pluginContentPages(
-      {
-        ...context,
-        i18n: {
-          ...context.i18n,
-          currentLocale: 'fr',
+    const context = await loadContext({siteDir, locale: 'fr'});
+    const plugin = await pluginContentPages(
+      context,
+      validateOptions({
+        validate: normalizePluginOptions,
+        options: {
+          path: 'src/pages',
         },
-      },
-      normalizePluginOptions({
-        path: pluginPath,
       }),
     );
-    const pagesMetadata = await plugin.loadContent?.();
+    const pagesMetadata = await plugin.loadContent!();
 
-    const frTranslationsPath = path.posix.join(
-      '@site',
-      'i18n',
-      'fr',
-      'docusaurus-plugin-content-pages',
+    expect(pagesMetadata).toMatchSnapshot();
+  });
+
+  it('loads simple pages with last update', async () => {
+    const siteDir = path.join(__dirname, '__fixtures__', 'website');
+    const context = await loadContext({siteDir});
+    const plugin = await pluginContentPages(
+      context,
+      validateOptions({
+        validate: normalizePluginOptions,
+        options: {
+          path: 'src/pages',
+          editUrl: () => 'url placeholder',
+          showLastUpdateAuthor: true,
+          showLastUpdateTime: true,
+        },
+      }),
     );
+    const pagesMetadata = await plugin.loadContent!();
 
-    expect(pagesMetadata).toEqual([
-      {
-        type: 'jsx',
-        permalink: '/',
-        source: path.posix.join('@site', pluginPath, 'index.js'),
-      },
-      {
-        type: 'jsx',
-        permalink: '/typescript',
-        source: path.posix.join('@site', pluginPath, 'typescript.tsx'),
-      },
-      {
-        type: 'mdx',
-        permalink: '/hello/',
-        source: path.posix.join('@site', pluginPath, 'hello', 'index.md'),
-      },
-      {
-        type: 'mdx',
-        permalink: '/hello/mdxPage',
-        source: path.posix.join('@site', pluginPath, 'hello', 'mdxPage.mdx'),
-      },
-      {
-        type: 'jsx',
-        permalink: '/hello/translatedJs',
-        source: path.posix.join(frTranslationsPath, 'hello', 'translatedJs.js'),
-      },
-      {
-        type: 'mdx',
-        permalink: '/hello/translatedMd',
-        source: path.posix.join(frTranslationsPath, 'hello', 'translatedMd.md'),
-      },
-      {
-        type: 'jsx',
-        permalink: '/hello/world',
-        source: path.posix.join('@site', pluginPath, 'hello', 'world.js'),
-      },
-    ]);
+    expect(pagesMetadata).toMatchSnapshot();
   });
 });

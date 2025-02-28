@@ -6,64 +6,62 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-const chalk = require('chalk');
-const semver = require('semver');
-const path = require('path');
-const program = require('commander');
-const {default: init} = require('../lib');
-const requiredVersion = require('../package.json').engines.node;
+// @ts-check
+
+import path from 'path';
+import {createRequire} from 'module';
+import {logger} from '@docusaurus/logger';
+import semver from 'semver';
+import {program} from 'commander';
+
+const packageJson = /** @type {import("../package.json")} */ (
+  createRequire(import.meta.url)('../package.json')
+);
+const requiredVersion = packageJson.engines.node;
 
 if (!semver.satisfies(process.version, requiredVersion)) {
-  console.log(
-    chalk.red(`\nMinimum Node.js version not met :)`) +
-      chalk.yellow(
-        `\nYou are using Node.js ${process.version}, Requirement: Node.js ${requiredVersion}.\n`,
-      ),
-  );
+  logger.error('Minimum Node.js version not met :(');
+  logger.info`You are using Node.js number=${process.version}, Requirement: Node.js number=${requiredVersion}.`;
   process.exit(1);
 }
 
-function wrapCommand(fn) {
-  return (...args) =>
-    fn(...args).catch((err) => {
-      console.error(chalk.red(err.stack));
-      process.exitCode = 1;
-    });
-}
+program.version(packageJson.version);
 
 program
-  .version(require('../package.json').version)
-  .usage('<command> [options]');
-
-program
-  .command('init [siteName] [template] [rootDir]', {isDefault: true})
-  .option('--use-npm')
-  .option('--skip-install')
-  .option('--typescript')
+  .arguments('[siteName] [template] [rootDir]')
+  .option(
+    '-p, --package-manager <manager>',
+    'The package manager used to install dependencies. One of yarn, npm, pnpm, and bun.',
+  )
+  .option(
+    '-s, --skip-install',
+    'Do not run package manager immediately after scaffolding',
+  )
+  .option('-t, --typescript', 'Use the TypeScript template variant')
+  .option('-j, --javascript', 'Use the JavaScript template variant')
+  .option(
+    '-g, --git-strategy <strategy>',
+    `Only used if the template is a git repository.
+\`deep\`: preserve full history
+\`shallow\`: clone with --depth=1
+\`copy\`: do a shallow clone, but do not create a git repo
+\`custom\`: enter your custom git clone command. We will prompt you for it.`,
+  )
   .description('Initialize website.')
-  .action(
-    (
-      siteName,
-      template,
-      rootDir = '.',
-      {useNpm, skipInstall, typescript} = {},
-    ) => {
-      wrapCommand(init)(path.resolve(rootDir), siteName, template, {
-        useNpm,
-        skipInstall,
-        typescript,
-      });
-    },
+  .action((siteName, template, rootDir, options) =>
+    // See https://github.com/facebook/docusaurus/pull/6860
+    import('../lib/index.js').then(({default: init}) =>
+      init(path.resolve(rootDir ?? '.'), siteName, template, options),
+    ),
   );
-
-program.arguments('<command>').action((cmd) => {
-  program.outputHelp();
-  console.log(`  ${chalk.red(`\n  Unknown command ${chalk.yellow(cmd)}.`)}`);
-  console.log();
-});
 
 program.parse(process.argv);
 
 if (!process.argv.slice(1).length) {
   program.outputHelp();
 }
+
+process.on('unhandledRejection', (err) => {
+  logger.error(err);
+  process.exit(1);
+});

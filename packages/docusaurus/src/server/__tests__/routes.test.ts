@@ -5,100 +5,55 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import loadRoutes from '../routes';
-import {RouteConfig} from '@docusaurus/types';
+import {jest} from '@jest/globals';
+import {handleDuplicateRoutes} from '../routes';
+import type {RouteConfig} from '@docusaurus/types';
 
-describe('loadRoutes', () => {
-  test('nested route config', async () => {
-    const nestedRouteConfig: RouteConfig = {
-      component: '@theme/DocPage',
-      path: '/docs:route',
-      modules: {
-        docsMetadata: 'docs-b5f.json',
-      },
+describe('handleDuplicateRoutes', () => {
+  const routes: RouteConfig[] = [
+    {
+      path: '/',
+      component: '',
       routes: [
-        {
-          path: '/docs/hello',
-          component: '@theme/DocItem',
-          exact: true,
-          modules: {
-            content: 'docs/hello.md',
-            metadata: 'docs-hello-da2.json',
-          },
-          sidebar: 'main',
-        },
-        {
-          path: 'docs/foo/baz',
-          component: '@theme/DocItem',
-          modules: {
-            content: 'docs/foo/baz.md',
-            metadata: 'docs-foo-baz-dd9.json',
-          },
-          sidebar: 'secondary',
-        },
+        {path: '/search', component: ''},
+        {path: '/sameDoc', component: ''},
       ],
-    };
-    const result = await loadRoutes([nestedRouteConfig], '/');
-    expect(result).toMatchSnapshot();
-  });
-
-  test('flat route config', async () => {
-    const flatRouteConfig: RouteConfig = {
-      path: '/blog',
-      component: '@theme/BlogListPage',
-      exact: true,
-      modules: {
-        items: [
-          {
-            content: {
-              __import: true,
-              path: 'blog/2018-12-14-Happy-First-Birthday-Slash.md',
-              query: {
-                truncated: true,
-              },
-            },
-            metadata: 'blog-2018-12-14-happy-first-birthday-slash-d2c.json',
-          },
-          {
-            content: 'blog/2018-12-14-Happy-First-Birthday-Slash.md',
-            metadata: null,
-          },
-        ],
-      },
-    };
-    const result = await loadRoutes([flatRouteConfig], '/');
-    expect(result).toMatchSnapshot();
-  });
-
-  test('invalid route config', async () => {
-    const routeConfigWithoutPath = {
-      component: 'hello/world.js',
-    } as RouteConfig;
-
-    expect(loadRoutes([routeConfigWithoutPath], '/')).rejects
-      .toMatchInlineSnapshot(`
-      [Error: Invalid route config: path must be a string and component is required.
-      {"component":"hello/world.js"}]
+    },
+    {
+      path: '/',
+      component: '',
+      routes: [
+        {path: '/search', component: ''},
+        {path: '/sameDoc', component: ''},
+        {path: '/uniqueDoc', component: ''},
+      ],
+    },
+    {
+      path: '/',
+      component: '',
+    },
+    {
+      path: '/',
+      component: '',
+    },
+    {
+      path: '/',
+      component: '',
+    },
+  ];
+  it('works', () => {
+    expect(() => {
+      handleDuplicateRoutes(routes, 'throw');
+    }).toThrowErrorMatchingInlineSnapshot(`
+      "Duplicate routes found!
+      - Attempting to create page at /search, but a page already exists at this route.
+      - Attempting to create page at /sameDoc, but a page already exists at this route.
+      - Attempting to create page at /, but a page already exists at this route.
+      - Attempting to create page at /, but a page already exists at this route.
+      This could lead to non-deterministic routing behavior."
     `);
-
-    const routeConfigWithoutComponent = {
-      path: '/hello/world',
-    } as RouteConfig;
-
-    expect(loadRoutes([routeConfigWithoutComponent], '/')).rejects
-      .toMatchInlineSnapshot(`
-      [Error: Invalid route config: path must be a string and component is required.
-      {"path":"/hello/world"}]
-    `);
-  });
-
-  test('route config with empty (but valid) path string', async () => {
-    const routeConfig = {
-      path: '',
-      component: 'hello/world.js',
-    } as RouteConfig;
-
-    const result = await loadRoutes([routeConfig], '/');
-    expect(result).toMatchSnapshot();
+    const consoleMock = jest.spyOn(console, 'log').mockImplementation(() => {});
+    handleDuplicateRoutes(routes, 'ignore');
+    expect(consoleMock).toHaveBeenCalledTimes(0);
   });
 });

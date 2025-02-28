@@ -6,86 +6,200 @@
  */
 
 import path from 'path';
-
-import {DEFAULT_PLUGIN_ID} from '@docusaurus/core/lib/constants';
+import fs from 'fs-extra';
+import _ from 'lodash';
+import logger from '@docusaurus/logger';
 import {
   normalizeUrl,
   docuHash,
   aliasedSitePath,
-  reportMessage,
+  getContentPathList,
   posixPath,
   addTrailingPathSeparator,
   createAbsoluteFilePathMatcher,
   createSlugger,
+  resolveMarkdownLinkPathname,
+  DEFAULT_PLUGIN_ID,
+  type TagsFile,
 } from '@docusaurus/utils';
-import type {LoadContext, Plugin} from '@docusaurus/types';
-import {loadSidebars} from './sidebars';
+import {
+  getTagsFile,
+  getTagsFilePathsToWatch,
+} from '@docusaurus/utils-validation';
+import {createMDXLoaderRule} from '@docusaurus/mdx-loader';
+import {loadSidebars, resolveSidebarPathOption} from './sidebars';
 import {CategoryMetadataFilenamePattern} from './sidebars/generator';
 import {
   readVersionDocs,
   processDocMetadata,
   addDocNavigation,
-  getMainDocId,
+  type DocEnv,
+  createDocsByIdIndex,
 } from './docs';
-import {getDocsDirPaths, readVersionsMetadata} from './versions';
-
 import {
-  PluginOptions,
-  LoadedContent,
-  SourceToPermalink,
-  DocMetadataBase,
-  GlobalPluginData,
-  VersionMetadata,
-  LoadedVersion,
-  DocFile,
-  DocsMarkdownOption,
-  VersionTag,
-} from './types';
-import type {RuleSetRule} from 'webpack';
-import {cliDocsVersionCommand} from './cli';
+  getVersionFromSourceFilePath,
+  readVersionsMetadata,
+  toFullVersion,
+} from './versions';
+import cliDocs from './cli';
 import {VERSIONS_JSON_FILE} from './constants';
-import {keyBy, mapValues} from 'lodash';
 import {toGlobalDataVersion} from './globalData';
-import {toTagDocListProp} from './props';
 import {
   translateLoadedContent,
   getLoadedContentTranslationFiles,
 } from './translations';
-import chalk from 'chalk';
-import {getVersionTags} from './tags';
-import {createVersionRoutes} from './routes';
-import type {PropTagsListPage} from '@docusaurus/plugin-content-docs';
+import {createAllRoutes} from './routes';
 import {createSidebarsUtils} from './sidebars/utils';
-import {getCategoryGeneratedIndexMetadataList} from './categoryGeneratedIndex';
 
-export default function pluginContentDocs(
+import {createContentHelpers} from './contentHelpers';
+import type {
+  PluginOptions,
+  DocMetadataBase,
+  VersionMetadata,
+  DocFrontMatter,
+  LoadedContent,
+  LoadedVersion,
+} from '@docusaurus/plugin-content-docs';
+import type {LoadContext, Plugin} from '@docusaurus/types';
+import type {DocFile, FullVersion} from './types';
+import type {RuleSetRule} from 'webpack';
+
+// MDX loader is not 100% deterministic, leading to cache invalidation issue
+// This permits to invalidate the MDX loader cache entries when content changes
+// Problem documented here: https://github.com/facebook/docusaurus/pull/10934
+// TODO this is not a perfect solution, find better?
+async function createMdxLoaderDependencyFile({
+  dataDir,
+  options,
+  versionsMetadata,
+}: {
+  dataDir: string;
+  options: PluginOptions;
+  versionsMetadata: VersionMetadata[];
+}): Promise<string | undefined> {
+  // TODO this has been temporarily made opt-in until Rspack cache bug is fixed
+  //  See https://github.com/facebook/docusaurus/pull/10931
+  //  See https://github.com/facebook/docusaurus/pull/10934#issuecomment-2672253145
+  if (!process.env.DOCUSAURUS_ENABLE_MDX_DEPENDENCY_FILE) {
+    return undefined;
+  }
+
+  const filePath = path.join(dataDir, '__mdx-loader-dependency.json');
+  // the cache is invalidated whenever this file content changes
+  const fileContent = {
+    options,
+    versionsMetadata,
+  };
+  await fs.ensureDir(dataDir);
+  await fs.writeFile(filePath, JSON.stringify(fileContent));
+  return filePath;
+}
+
+export default async function pluginContentDocs(
   context: LoadContext,
   options: PluginOptions,
-): Plugin<LoadedContent> {
+): Promise<Plugin<LoadedContent>> {
   const {siteDir, generatedFilesDir, baseUrl, siteConfig} = context;
+  // Mutate options to resolve sidebar path according to siteDir
+  options.sidebarPath = resolveSidebarPathOption(siteDir, options.sidebarPath);
 
-  const versionsMetadata = readVersionsMetadata({context, options});
+  const versionsMetadata = await readVersionsMetadata({context, options});
 
-  const pluginId = options.id ?? DEFAULT_PLUGIN_ID;
+  const pluginId = options.id;
 
   const pluginDataDirRoot = path.join(
     generatedFilesDir,
     'docusaurus-plugin-content-docs',
   );
   const dataDir = path.join(pluginDataDirRoot, pluginId);
+  // TODO Docusaurus v4 breaking change
+  //  module aliasing should be automatic
+  //  we should never find local absolute FS paths in the codegen registry
   const aliasedSource = (source: string) =>
     `~docs/${posixPath(path.relative(pluginDataDirRoot, source))}`;
 
+  // TODO env should be injected into all plugins
+  const env = process.env.NODE_ENV as DocEnv;
+
+  const contentHelpers = createContentHelpers();
+
+  async function createDocsMDXLoaderRule(): Promise<RuleSetRule> {
+    const {
+      rehypePlugins,
+      remarkPlugins,
+      recmaPlugins,
+      beforeDefaultRehypePlugins,
+      beforeDefaultRemarkPlugins,
+    } = options;
+    const contentDirs = versionsMetadata
+      .flatMap(getContentPathList)
+      // Trailing slash is important, see https://github.com/facebook/docusaurus/pull/3970
+      .map(addTrailingPathSeparator);
+
+    return createMDXLoaderRule({
+      include: contentDirs,
+      options: {
+        dependencies: [
+          await createMdxLoaderDependencyFile({
+            dataDir,
+            options,
+            versionsMetadata,
+          }),
+        ].filter((d): d is string => typeof d === 'string'),
+
+        useCrossCompilerCache:
+          siteConfig.future.experimental_faster.mdxCrossCompilerCache,
+        admonitions: options.admonitions,
+        remarkPlugins,
+        rehypePlugins,
+        recmaPlugins,
+        beforeDefaultRehypePlugins,
+        beforeDefaultRemarkPlugins,
+        staticDirs: siteConfig.staticDirectories.map((dir) =>
+          path.resolve(siteDir, dir),
+        ),
+        siteDir,
+        isMDXPartial: createAbsoluteFilePathMatcher(
+          options.exclude,
+          contentDirs,
+        ),
+        metadataPath: (mdxPath: string) => {
+          // Note that metadataPath must be the same/in-sync as
+          // the path from createData for each MDX.
+          const aliasedPath = aliasedSitePath(mdxPath, siteDir);
+          return path.join(dataDir, `${docuHash(aliasedPath)}.json`);
+        },
+        // createAssets converts relative paths to require() calls
+        createAssets: ({frontMatter}: {frontMatter: DocFrontMatter}) => ({
+          image: frontMatter.image,
+        }),
+        markdownConfig: siteConfig.markdown,
+        resolveMarkdownLink: ({linkPathname, sourceFilePath}) => {
+          const version = getVersionFromSourceFilePath(
+            sourceFilePath,
+            versionsMetadata,
+          );
+          const permalink = resolveMarkdownLinkPathname(linkPathname, {
+            sourceFilePath,
+            sourceToPermalink: contentHelpers.sourceToPermalink,
+            siteDir,
+            contentPaths: version,
+          });
+          if (permalink === null) {
+            logger.report(
+              siteConfig.onBrokenMarkdownLinks,
+            )`Docs markdown link couldn't be resolved: (url=${linkPathname}) in source file path=${sourceFilePath} for version number=${version.versionName}`;
+          }
+          return permalink;
+        },
+      },
+    });
+  }
+
+  const docsMDXLoaderRule = await createDocsMDXLoaderRule();
+
   return {
     name: 'docusaurus-plugin-content-docs',
-
-    getThemePath() {
-      return path.resolve(__dirname, './theme');
-    },
-
-    getTypeScriptThemePath() {
-      return path.resolve(__dirname, '..', 'src', 'theme');
-    },
 
     extendCli(cli) {
       const isDefaultPluginId = pluginId === DEFAULT_PLUGIN_ID;
@@ -103,17 +217,12 @@ export default function pluginContentDocs(
         .command(command)
         .arguments('<version>')
         .description(commandDescription)
-        .action((version) => {
-          cliDocsVersionCommand(version, siteDir, pluginId, {
-            path: options.path,
-            sidebarPath: options.sidebarPath,
-            sidebarCollapsed: options.sidebarCollapsed,
-            sidebarCollapsible: options.sidebarCollapsible,
-          });
-        });
+        .action((version: unknown) =>
+          cliDocs.cliDocsVersionCommand(version, options, context),
+        );
     },
 
-    async getTranslationFiles({content}) {
+    getTranslationFiles({content}) {
       return getLoadedContentTranslationFiles(content);
     },
 
@@ -121,10 +230,14 @@ export default function pluginContentDocs(
       function getVersionPathsToWatch(version: VersionMetadata): string[] {
         const result = [
           ...options.include.flatMap((pattern) =>
-            getDocsDirPaths(version).map(
+            getContentPathList(version).map(
               (docsDirPath) => `${docsDirPath}/${pattern}`,
             ),
           ),
+          ...getTagsFilePathsToWatch({
+            contentPaths: version,
+            tags: options.tags,
+          }),
           `${version.contentPath}/**/${CategoryMetadataFilenamePattern}`,
         ];
         if (typeof version.sidebarFilePath === 'string') {
@@ -139,6 +252,7 @@ export default function pluginContentDocs(
     async loadContent() {
       async function loadVersionDocsBase(
         versionMetadata: VersionMetadata,
+        tagsFile: TagsFile | null,
       ): Promise<DocMetadataBase[]> {
         const docFiles = await readVersionDocs(versionMetadata, options);
         if (docFiles.length === 0) {
@@ -151,12 +265,14 @@ export default function pluginContentDocs(
             )}".`,
           );
         }
-        async function processVersionDoc(docFile: DocFile) {
+        function processVersionDoc(docFile: DocFile) {
           return processDocMetadata({
             docFile,
             versionMetadata,
             context,
             options,
+            env,
+            tagsFile,
           });
         }
         return Promise.all(docFiles.map(processVersionDoc));
@@ -165,14 +281,26 @@ export default function pluginContentDocs(
       async function doLoadVersion(
         versionMetadata: VersionMetadata,
       ): Promise<LoadedVersion> {
-        const docs: DocMetadataBase[] = await loadVersionDocsBase(
+        const tagsFile = await getTagsFile({
+          contentPaths: versionMetadata,
+          tags: options.tags,
+        });
+
+        const docsBase: DocMetadataBase[] = await loadVersionDocsBase(
           versionMetadata,
+          tagsFile,
         );
+
+        // TODO we only ever need draftIds in further code, not full draft items
+        // To simplify and prevent mistakes, avoid exposing draft
+        // replace draft=>draftIds in content loaded
+        const [drafts, docs] = _.partition(docsBase, (doc) => doc.draft);
 
         const sidebars = await loadSidebars(versionMetadata.sidebarFilePath, {
           sidebarItemsGenerator: options.sidebarItemsGenerator,
           numberPrefixParser: options.numberPrefixParser,
           docs,
+          drafts,
           version: versionMetadata,
           sidebarOptions: {
             sidebarCollapsed: options.sidebarCollapsed,
@@ -183,32 +311,36 @@ export default function pluginContentDocs(
 
         const sidebarsUtils = createSidebarsUtils(sidebars);
 
+        const docsById = createDocsByIdIndex(docs);
+        const allDocIds = Object.keys(docsById);
+
+        sidebarsUtils.checkLegacyVersionedSidebarNames({
+          sidebarFilePath: versionMetadata.sidebarFilePath as string,
+          versionMetadata,
+        });
+        sidebarsUtils.checkSidebarsDocIds({
+          allDocIds,
+          sidebarFilePath: versionMetadata.sidebarFilePath as string,
+          versionMetadata,
+        });
+
         return {
           ...versionMetadata,
-          docs: addDocNavigation(
-            docs,
-            sidebarsUtils,
-            versionMetadata.sidebarFilePath as string,
-          ),
-          sidebars,
-          mainDocId: getMainDocId({docs, sidebarsUtils}),
-          categoryGeneratedIndices: getCategoryGeneratedIndexMetadataList({
+          docs: addDocNavigation({
             docs,
             sidebarsUtils,
           }),
+          drafts,
+          sidebars,
         };
       }
 
       async function loadVersion(versionMetadata: VersionMetadata) {
         try {
           return await doLoadVersion(versionMetadata);
-        } catch (e) {
-          console.error(
-            chalk.red(
-              `Loading of version failed for version "${versionMetadata.versionName}"`,
-            ),
-          );
-          throw e;
+        } catch (err) {
+          logger.error`Loading of version failed for version name=${versionMetadata.versionName}`;
+          throw err;
         }
       }
 
@@ -222,164 +354,26 @@ export default function pluginContentDocs(
     },
 
     async contentLoaded({content, actions}) {
-      const {loadedVersions} = content;
-      const {
-        docLayoutComponent,
-        docItemComponent,
-        docCategoryGeneratedIndexComponent,
-      } = options;
-      const {addRoute, createData, setGlobalData} = actions;
+      contentHelpers.updateContent(content);
 
-      async function createVersionTagsRoutes(version: LoadedVersion) {
-        const versionTags = getVersionTags(version.docs);
+      const versions: FullVersion[] = content.loadedVersions.map(toFullVersion);
 
-        // TODO tags should be a sub route of the version route
-        async function createTagsListPage() {
-          const tagsProp: PropTagsListPage['tags'] = Object.values(
-            versionTags,
-          ).map((tagValue) => ({
-            name: tagValue.name,
-            permalink: tagValue.permalink,
-            count: tagValue.docIds.length,
-          }));
+      await createAllRoutes({
+        baseUrl,
+        versions,
+        options,
+        actions,
+        aliasedSource,
+      });
 
-          // Only create /tags page if there are tags.
-          if (Object.keys(tagsProp).length > 0) {
-            const tagsPropPath = await createData(
-              `${docuHash(`tags-list-${version.versionName}-prop`)}.json`,
-              JSON.stringify(tagsProp, null, 2),
-            );
-            addRoute({
-              path: version.tagsPath,
-              exact: true,
-              component: options.docTagsListComponent,
-              modules: {
-                tags: aliasedSource(tagsPropPath),
-              },
-            });
-          }
-        }
-
-        // TODO tags should be a sub route of the version route
-        async function createTagDocListPage(tag: VersionTag) {
-          const tagProps = toTagDocListProp({
-            allTagsPath: version.tagsPath,
-            tag,
-            docs: version.docs,
-          });
-          const tagPropPath = await createData(
-            `${docuHash(`tag-${tag.permalink}`)}.json`,
-            JSON.stringify(tagProps, null, 2),
-          );
-          addRoute({
-            path: tag.permalink,
-            component: options.docTagDocListComponent,
-            exact: true,
-            modules: {
-              tag: aliasedSource(tagPropPath),
-            },
-          });
-        }
-
-        await createTagsListPage();
-        await Promise.all(Object.values(versionTags).map(createTagDocListPage));
-      }
-
-      await Promise.all(
-        loadedVersions.map((loadedVersion) =>
-          createVersionRoutes({
-            loadedVersion,
-            docItemComponent,
-            docLayoutComponent,
-            docCategoryGeneratedIndexComponent,
-            pluginId,
-            aliasedSource,
-            actions,
-          }),
-        ),
-      );
-
-      // TODO tags should be a sub route of the version route
-      await Promise.all(loadedVersions.map(createVersionTagsRoutes));
-
-      setGlobalData<GlobalPluginData>({
+      actions.setGlobalData({
         path: normalizeUrl([baseUrl, options.routeBasePath]),
-        versions: loadedVersions.map(toGlobalDataVersion),
+        versions: versions.map(toGlobalDataVersion),
+        breadcrumbs: options.breadcrumbs,
       });
     },
 
-    configureWebpack(_config, isServer, utils, content) {
-      const {getJSLoader} = utils;
-      const {
-        rehypePlugins,
-        remarkPlugins,
-        beforeDefaultRehypePlugins,
-        beforeDefaultRemarkPlugins,
-      } = options;
-
-      function getSourceToPermalink(): SourceToPermalink {
-        const allDocs = content.loadedVersions.flatMap((v) => v.docs);
-        return mapValues(
-          keyBy(allDocs, (d) => d.source),
-          (d) => d.permalink,
-        );
-      }
-
-      const docsMarkdownOptions: DocsMarkdownOption = {
-        siteDir,
-        sourceToPermalink: getSourceToPermalink(),
-        versionsMetadata,
-        onBrokenMarkdownLink: (brokenMarkdownLink) => {
-          if (siteConfig.onBrokenMarkdownLinks === 'ignore') {
-            return;
-          }
-          reportMessage(
-            `Docs markdown link couldn't be resolved: (${brokenMarkdownLink.link}) in ${brokenMarkdownLink.filePath} for version ${brokenMarkdownLink.contentPaths.versionName}`,
-            siteConfig.onBrokenMarkdownLinks,
-          );
-        },
-      };
-
-      function createMDXLoaderRule(): RuleSetRule {
-        const contentDirs = versionsMetadata.flatMap(getDocsDirPaths);
-        return {
-          test: /(\.mdx?)$/,
-          include: contentDirs
-            // Trailing slash is important, see https://github.com/facebook/docusaurus/pull/3970
-            .map(addTrailingPathSeparator),
-          use: [
-            getJSLoader({isServer}),
-            {
-              loader: require.resolve('@docusaurus/mdx-loader'),
-              options: {
-                remarkPlugins,
-                rehypePlugins,
-                beforeDefaultRehypePlugins,
-                beforeDefaultRemarkPlugins,
-                staticDirs: siteConfig.staticDirectories.map((dir) =>
-                  path.resolve(siteDir, dir),
-                ),
-                siteDir,
-                isMDXPartial: createAbsoluteFilePathMatcher(
-                  options.exclude,
-                  contentDirs,
-                ),
-                metadataPath: (mdxPath: string) => {
-                  // Note that metadataPath must be the same/in-sync as
-                  // the path from createData for each MDX.
-                  const aliasedPath = aliasedSitePath(mdxPath, siteDir);
-                  return path.join(dataDir, `${docuHash(aliasedPath)}.json`);
-                },
-              },
-            },
-            {
-              loader: path.resolve(__dirname, './markdown/index.js'),
-              options: docsMarkdownOptions,
-            },
-          ].filter(Boolean),
-        };
-      }
-
+    configureWebpack() {
       return {
         ignoreWarnings: [
           // Suppress warnings about non-existing of versions file.
@@ -393,7 +387,7 @@ export default function pluginContentDocs(
           },
         },
         module: {
-          rules: [createMDXLoaderRule()],
+          rules: [docsMDXLoaderRule],
         },
       };
     },

@@ -5,21 +5,27 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+import {jest} from '@jest/globals';
 import path from 'path';
-
-import {
-  excludeJS,
-  clientDir,
-  getDocusaurusAliases,
-  createBaseConfig,
-} from '../base';
-import * as utils from '../utils';
-import {mapValues} from 'lodash';
+import _ from 'lodash';
+import webpack from 'webpack';
 import {posixPath} from '@docusaurus/utils';
-import {Props, ThemeAliases} from '@docusaurus/types';
+import {excludeJS, clientDir, createBaseConfig} from '../base';
+import {
+  DEFAULT_FASTER_CONFIG,
+  DEFAULT_FUTURE_CONFIG,
+} from '../../server/configValidation';
+import {createConfigureWebpackUtils} from '../configure';
+import type {Props} from '@docusaurus/types';
+
+function createTestConfigureWebpackUtils() {
+  return createConfigureWebpackUtils({
+    siteConfig: {webpack: {jsLoader: 'babel'}, future: DEFAULT_FUTURE_CONFIG},
+  });
+}
 
 describe('babel transpilation exclude logic', () => {
-  test('always transpile client dir files', () => {
+  it('always transpiles client dir files', () => {
     const clientFiles = [
       'App.js',
       'clientEntry.js',
@@ -27,62 +33,51 @@ describe('babel transpilation exclude logic', () => {
       path.join('exports', 'Link.js'),
     ];
     clientFiles.forEach((file) => {
-      expect(excludeJS(path.join(clientDir, file))).toEqual(false);
+      expect(excludeJS(path.join(clientDir, file))).toBe(false);
     });
   });
 
-  test('always transpile non node_module files', () => {
+  it('always transpiles non node_module files', () => {
     const moduleFiles = [
       '/pages/user/App.jsx',
       '/website/src/components/foo.js',
       '/src/theme/SearchBar/index.js',
     ];
     moduleFiles.forEach((file) => {
-      expect(excludeJS(file)).toEqual(false);
+      expect(excludeJS(file)).toBe(false);
     });
   });
 
-  test('transpile docusaurus npm packages even in node_modules', () => {
+  it('transpiles docusaurus npm packages even in node_modules', () => {
     const moduleFiles = [
       '/website/node_modules/docusaurus-theme-search/theme/Navbar/index.js',
       'node_modules/@docusaurus/theme-classic/theme/Layout.js',
       '/docusaurus/website/node_modules/@docusaurus/theme-search-algolia/theme/SearchBar.js',
     ];
     moduleFiles.forEach((file) => {
-      expect(excludeJS(file)).toEqual(false);
+      expect(excludeJS(file)).toBe(false);
     });
   });
 
-  test('does not transpile node_modules', () => {
+  it('does not transpile node_modules', () => {
     const moduleFiles = [
       'node_modules/react-toggle.js',
       '/website/node_modules/react-trend/index.js',
       '/docusaurus/website/node_modules/react-super.js',
       '/docusaurus/website/node_modules/@docusaurus/core/node_modules/core-js/modules/_descriptors.js',
-      'node_modules/docusaurus-theme-classic/node_modules/react-daypicker/index.js',
+      'node_modules/docusaurus-theme-classic/node_modules/react-slick/index.js',
     ];
     moduleFiles.forEach((file) => {
-      expect(excludeJS(file)).toEqual(true);
+      expect(excludeJS(file)).toBe(true);
     });
   });
 });
 
-describe('getDocusaurusAliases()', () => {
-  test('return appropriate webpack aliases', () => {
-    // using relative paths makes tests work everywhere
-    const relativeDocusaurusAliases = mapValues(
-      getDocusaurusAliases(),
-      (aliasValue) => posixPath(path.relative(__dirname, aliasValue)),
-    );
-    expect(relativeDocusaurusAliases).toMatchSnapshot();
-  });
-});
-
 describe('base webpack config', () => {
-  const props: Props = {
+  const props = {
     outDir: '',
     siteDir: path.resolve(__dirname, '__fixtures__', 'base_test_site'),
-    siteConfig: {staticDirectories: ['static']},
+    siteConfig: {staticDirectories: ['static'], future: DEFAULT_FUTURE_CONFIG},
     baseUrl: '',
     generatedFilesDir: '',
     routesPaths: [''],
@@ -92,6 +87,7 @@ describe('base webpack config', () => {
     siteMetadata: {
       docusaurusVersion: '2.0.0-alpha.70',
     },
+    currentBundler: {name: 'webpack', instance: webpack},
     plugins: [
       {
         getThemePath() {
@@ -114,31 +110,26 @@ describe('base webpack config', () => {
         },
       },
     ],
-  };
+  } as Props;
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  test('should create webpack aliases', () => {
-    // @ts-expect-error: Docusaurus webpack alias is always an object
-    const aliases: ThemeAliases =
-      createBaseConfig(props, true).resolve?.alias ?? {};
+  it('creates webpack aliases', async () => {
+    const aliases = ((
+      await createBaseConfig({
+        props,
+        isServer: true,
+        minify: true,
+        faster: DEFAULT_FASTER_CONFIG,
+        configureWebpackUtils: await createTestConfigureWebpackUtils(),
+      })
+    ).resolve?.alias ?? {}) as {[alias: string]: string};
     // Make aliases relative so that test work on all computers
-    const relativeAliases = mapValues(aliases, (a) =>
+    const relativeAliases = _.mapValues(aliases, (a) =>
       posixPath(path.relative(props.siteDir, a)),
     );
     expect(relativeAliases).toMatchSnapshot();
-  });
-
-  test('should use svg rule', () => {
-    const fileLoaderUtils = utils.getFileLoaderUtils();
-    const mockSvg = jest.spyOn(fileLoaderUtils.rules, 'svg');
-    jest
-      .spyOn(utils, 'getFileLoaderUtils')
-      .mockImplementation(() => fileLoaderUtils);
-
-    createBaseConfig(props, false, false);
-    expect(mockSvg).toBeCalled();
   });
 });

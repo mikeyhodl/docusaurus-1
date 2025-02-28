@@ -1,10 +1,37 @@
 {
-  "name": "Docusaurus Dev Container",
-  "image": "mcr.microsoft.com/vscode/devcontainers/typescript-node:14-buster",
-  "settings": {
-    "terminal.integrated.shell.linux": "/bin/bash"
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "[typescript]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
+        },
+        "[json]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
+        },
+        "[jsonc]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode",
+          "editor.formatOnSave": true
+        }
+      },
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "orta.vscode-jest",
+        "esbenp.prettier-vscode",
+        "streetsidesoftware.code-spell-checker"
+      ]
+    }
   },
-  "extensions": ["dbaeumer.vscode-eslint", "orta.vscode-jest"],
   "forwardPorts": [3000],
-  "postCreateCommand": "yarn install"
+  "containerUser": "vscode",
+  "postCreateCommand": "yarn install",
+  "waitFor": "postCreateCommand", // otherwise automated jest tests fail
+  "features": {
+    "node": {
+      "version": "22"
+    },
+    "github-cli": "latest"
+  }
 }

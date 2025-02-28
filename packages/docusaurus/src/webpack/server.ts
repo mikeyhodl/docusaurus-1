@@ -6,91 +6,53 @@
  */
 
 import path from 'path';
-import {Configuration} from 'webpack';
 import merge from 'webpack-merge';
-
-import {Props} from '@docusaurus/types';
+import {NODE_MAJOR_VERSION, NODE_MINOR_VERSION} from '@docusaurus/utils';
+import {getProgressBarPlugin} from '@docusaurus/bundler';
 import {createBaseConfig} from './base';
-import WaitPlugin from './plugins/WaitPlugin';
-import LogPlugin from './plugins/LogPlugin';
-import {NODE_MAJOR_VERSION, NODE_MINOR_VERSION} from '../constants';
+import type {ConfigureWebpackUtils, Props} from '@docusaurus/types';
+import type {Configuration} from 'webpack';
 
-// Forked for Docusaurus: https://github.com/slorber/static-site-generator-webpack-plugin
-import StaticSiteGeneratorPlugin from '@slorber/static-site-generator-webpack-plugin';
-
-export default function createServerConfig({
+export default async function createServerConfig({
   props,
-  onLinksCollected = () => {},
+  configureWebpackUtils,
 }: {
   props: Props;
-  onLinksCollected?: (staticPagePath: string, links: string[]) => void;
-}): Configuration {
-  const {
-    baseUrl,
-    routesPaths,
-    generatedFilesDir,
-    headTags,
-    preBodyTags,
-    postBodyTags,
-    ssrTemplate,
-    siteConfig: {noIndex, trailingSlash},
-  } = props;
-  const config = createBaseConfig(props, true);
-
-  const routesLocation: Record<string, string> = {};
-  // Array of paths to be rendered. Relative to output directory
-  const ssgPaths = routesPaths.map((str) => {
-    const ssgPath =
-      baseUrl === '/' ? str : str.replace(new RegExp(`^${baseUrl}`), '/');
-    routesLocation[ssgPath] = str;
-    return ssgPath;
+  configureWebpackUtils: ConfigureWebpackUtils;
+}): Promise<{config: Configuration; serverBundlePath: string}> {
+  const baseConfig = await createBaseConfig({
+    props,
+    isServer: true,
+    minify: false,
+    faster: props.siteConfig.future.experimental_faster,
+    configureWebpackUtils,
   });
-  const serverConfig = merge(config, {
+
+  const ProgressBarPlugin = await getProgressBarPlugin({
+    currentBundler: props.currentBundler,
+  });
+
+  const outputFilename = 'server.bundle.js';
+  const outputDir = path.join(props.outDir, '__server');
+  const serverBundlePath = path.join(outputDir, outputFilename);
+
+  const config = merge(baseConfig, {
     target: `node${NODE_MAJOR_VERSION}.${NODE_MINOR_VERSION}`,
     entry: {
       main: path.resolve(__dirname, '../client/serverEntry.js'),
     },
     output: {
-      filename: 'server.bundle.js',
+      path: outputDir,
+      filename: outputFilename,
       libraryTarget: 'commonjs2',
-      // Workaround for Webpack 4 Bug (https://github.com/webpack/webpack/issues/6522)
-      globalObject: 'this',
     },
     plugins: [
-      // Wait until manifest from client bundle is generated
-      new WaitPlugin({
-        filepath: path.join(generatedFilesDir, 'client-manifest.json'),
-      }),
-
-      // Static site generator webpack plugin.
-      new StaticSiteGeneratorPlugin({
-        entry: 'main',
-        locals: {
-          baseUrl,
-          generatedFilesDir,
-          routesLocation,
-          headTags,
-          preBodyTags,
-          postBodyTags,
-          onLinksCollected,
-          ssrTemplate,
-          noIndex,
-        },
-        paths: ssgPaths,
-        preferFoldersOutput: trailingSlash,
-
-        // When using "new URL('file.js', import.meta.url)", Webpack will emit __filename, and this plugin will throw
-        // not sure the __filename value has any importance for this plugin, just using an empty string to avoid the error
-        // See https://github.com/facebook/docusaurus/issues/4922
-        globals: {__filename: ''},
-      }),
-
-      // Show compilation progress bar.
-      new LogPlugin({
+      new ProgressBarPlugin({
         name: 'Server',
         color: 'yellow',
       }),
     ],
   });
-  return serverConfig;
+
+  return {config, serverBundlePath};
 }

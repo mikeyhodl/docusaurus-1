@@ -5,24 +5,25 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import {
-  ensureTranslationFileContent,
-  writeTranslationFileContent,
-  writePluginTranslations,
-  readTranslationFileContent,
-  WriteTranslationsOptions,
-  localizePluginTranslationFile,
-  getPluginsDefaultCodeTranslationMessages,
-  applyDefaultCodeTranslations,
-} from '../translations';
+import {jest} from '@jest/globals';
 import fs from 'fs-extra';
+import path from 'path';
 import tmp from 'tmp-promise';
 import {
+  writePluginTranslations,
+  writeCodeTranslations,
+  readCodeTranslationFileContent,
+  type WriteTranslationsOptions,
+  localizePluginTranslationFile,
+  loadPluginsDefaultCodeTranslationMessages,
+  applyDefaultCodeTranslations,
+} from '../translations';
+import type {
   InitializedPlugin,
+  LoadedPlugin,
   TranslationFile,
   TranslationFileContent,
 } from '@docusaurus/types';
-import path from 'path';
 
 async function createTmpSiteDir() {
   const {path: siteDirPath} = await tmp.dir({
@@ -34,260 +35,252 @@ async function createTmpSiteDir() {
 async function createTmpTranslationFile(
   content: TranslationFileContent | null,
 ) {
-  const filePath = await tmp.tmpName({
-    prefix: 'jest-createTmpTranslationFile',
-    postfix: '.json',
-  });
+  const siteDir = await createTmpSiteDir();
+  const filePath = path.join(siteDir, 'i18n/en/code.json');
 
   // null means we don't want a file, just a filename
   if (content !== null) {
-    await fs.writeFile(filePath, JSON.stringify(content, null, 2));
+    await fs.outputFile(filePath, JSON.stringify(content, null, 2));
   }
 
   return {
-    filePath,
-    readFile: async () => JSON.parse(await fs.readFile(filePath, 'utf8')),
+    localizationDir: path.join(siteDir, 'i18n/en'),
+    readFile() {
+      return fs.readJSON(filePath);
+    },
   };
 }
 
-describe('ensureTranslationFileContent', () => {
-  test('should pass valid translation file content', () => {
-    ensureTranslationFileContent({});
-    ensureTranslationFileContent({key1: {message: ''}});
-    ensureTranslationFileContent({key1: {message: 'abc'}});
-    ensureTranslationFileContent({key1: {message: 'abc', description: 'desc'}});
-    ensureTranslationFileContent({
-      key1: {message: 'abc', description: 'desc'},
-      key2: {message: 'def', description: 'desc'},
-    });
+describe('writeCodeTranslations', () => {
+  const consoleInfoMock = jest
+    .spyOn(console, 'info')
+    .mockImplementation(() => {});
+  beforeEach(() => {
+    consoleInfoMock.mockClear();
   });
 
-  test('should fail for invalid translation file content', () => {
-    expect(() =>
-      ensureTranslationFileContent(null),
-    ).toThrowErrorMatchingInlineSnapshot(
-      `"\\"value\\" must be of type object"`,
-    );
-    expect(() =>
-      ensureTranslationFileContent(undefined),
-    ).toThrowErrorMatchingInlineSnapshot(`"\\"value\\" is required"`);
-    expect(() =>
-      ensureTranslationFileContent('HEY'),
-    ).toThrowErrorMatchingInlineSnapshot(
-      `"\\"value\\" must be of type object"`,
-    );
-    expect(() =>
-      ensureTranslationFileContent(42),
-    ).toThrowErrorMatchingInlineSnapshot(
-      `"\\"value\\" must be of type object"`,
-    );
-    expect(() =>
-      ensureTranslationFileContent({key: {description: 'no message'}}),
-    ).toThrowErrorMatchingInlineSnapshot(`"\\"key.message\\" is required"`);
-    expect(() =>
-      ensureTranslationFileContent({key: {message: 42}}),
-    ).toThrowErrorMatchingInlineSnapshot(
-      `"\\"key.message\\" must be a string"`,
-    );
-    expect(() =>
-      ensureTranslationFileContent({
-        key: {message: 'Message', description: 42},
-      }),
-    ).toThrowErrorMatchingInlineSnapshot(
-      `"\\"key.description\\" must be a string"`,
-    );
-  });
-});
-
-describe('writeTranslationFileContent', () => {
-  test('should create new translation file', async () => {
-    const {filePath, readFile} = await createTmpTranslationFile(null);
-
-    await writeTranslationFileContent({
-      filePath,
-      content: {
+  it('creates new translation file', async () => {
+    const {localizationDir, readFile} = await createTmpTranslationFile(null);
+    await writeCodeTranslations(
+      {localizationDir},
+      {
         key1: {message: 'key1 message'},
         key2: {message: 'key2 message'},
         key3: {message: 'key3 message'},
       },
-    });
+      {},
+    );
 
-    expect(await readFile()).toEqual({
+    await expect(readFile()).resolves.toEqual({
       key1: {message: 'key1 message'},
       key2: {message: 'key2 message'},
       key3: {message: 'key3 message'},
     });
+    expect(consoleInfoMock).toHaveBeenCalledWith(
+      expect.stringMatching(/3.* translations will be written/),
+    );
   });
 
-  test('should create new translation file with prefix', async () => {
-    const {filePath, readFile} = await createTmpTranslationFile(null);
-
-    await writeTranslationFileContent({
-      filePath,
-      content: {
+  it('creates new translation file with prefix', async () => {
+    const {localizationDir, readFile} = await createTmpTranslationFile(null);
+    await writeCodeTranslations(
+      {localizationDir},
+      {
         key1: {message: 'key1 message'},
         key2: {message: 'key2 message'},
         key3: {message: 'key3 message'},
       },
-      options: {
+      {
         messagePrefix: 'PREFIX ',
       },
-    });
+    );
 
-    expect(await readFile()).toEqual({
+    await expect(readFile()).resolves.toEqual({
       key1: {message: 'PREFIX key1 message'},
       key2: {message: 'PREFIX key2 message'},
       key3: {message: 'PREFIX key3 message'},
     });
+    expect(consoleInfoMock).toHaveBeenCalledWith(
+      expect.stringMatching(/3.* translations will be written/),
+    );
   });
 
-  test('should append missing translations', async () => {
-    const {filePath, readFile} = await createTmpTranslationFile({
+  it('appends missing translations', async () => {
+    const {localizationDir, readFile} = await createTmpTranslationFile({
       key1: {message: 'key1 message'},
       key2: {message: 'key2 message'},
       key3: {message: 'key3 message'},
     });
 
-    await writeTranslationFileContent({
-      filePath,
-      content: {
+    await writeCodeTranslations(
+      {localizationDir},
+      {
         key1: {message: 'key1 message new'},
         key2: {message: 'key2 message new'},
         key3: {message: 'key3 message new'},
         key4: {message: 'key4 message new'},
       },
-    });
+      {},
+    );
 
-    expect(await readFile()).toEqual({
+    await expect(readFile()).resolves.toEqual({
       key1: {message: 'key1 message'},
       key2: {message: 'key2 message'},
       key3: {message: 'key3 message'},
       key4: {message: 'key4 message new'},
     });
+    expect(consoleInfoMock).toHaveBeenCalledWith(
+      expect.stringMatching(/4.* translations will be written/),
+    );
   });
 
-  test('should append missing translations with prefix', async () => {
-    const {filePath, readFile} = await createTmpTranslationFile({
+  it('appends missing.* translations with prefix', async () => {
+    const {localizationDir, readFile} = await createTmpTranslationFile({
       key1: {message: 'key1 message'},
     });
 
-    await writeTranslationFileContent({
-      filePath,
-      content: {
+    await writeCodeTranslations(
+      {localizationDir},
+      {
         key1: {message: 'key1 message new'},
         key2: {message: 'key2 message new'},
       },
-      options: {
+      {
         messagePrefix: 'PREFIX ',
       },
-    });
+    );
 
-    expect(await readFile()).toEqual({
+    await expect(readFile()).resolves.toEqual({
       key1: {message: 'key1 message'},
       key2: {message: 'PREFIX key2 message new'},
     });
+    expect(consoleInfoMock).toHaveBeenCalledWith(
+      expect.stringMatching(/2.* translations will be written/),
+    );
   });
 
-  test('should override missing translations', async () => {
-    const {filePath, readFile} = await createTmpTranslationFile({
+  it('overrides missing translations', async () => {
+    const {localizationDir, readFile} = await createTmpTranslationFile({
       key1: {message: 'key1 message'},
     });
 
-    await writeTranslationFileContent({
-      filePath,
-      content: {
+    await writeCodeTranslations(
+      {localizationDir},
+      {
         key1: {message: 'key1 message new'},
         key2: {message: 'key2 message new'},
       },
-      options: {
+      {
         override: true,
       },
-    });
+    );
 
-    expect(await readFile()).toEqual({
+    await expect(readFile()).resolves.toEqual({
       key1: {message: 'key1 message new'},
       key2: {message: 'key2 message new'},
     });
+    expect(consoleInfoMock).toHaveBeenCalledWith(
+      expect.stringMatching(/2.* translations will be written/),
+    );
   });
 
-  test('should override missing translations with prefix', async () => {
-    const {filePath, readFile} = await createTmpTranslationFile({
+  it('overrides missing translations with prefix', async () => {
+    const {localizationDir, readFile} = await createTmpTranslationFile({
       key1: {message: 'key1 message'},
     });
 
-    await writeTranslationFileContent({
-      filePath,
-      content: {
+    await writeCodeTranslations(
+      {localizationDir},
+      {
         key1: {message: 'key1 message new'},
         key2: {message: 'key2 message new'},
       },
-      options: {
+      {
         override: true,
         messagePrefix: 'PREFIX ',
       },
-    });
+    );
 
-    expect(await readFile()).toEqual({
+    await expect(readFile()).resolves.toEqual({
       key1: {message: 'PREFIX key1 message new'},
       key2: {message: 'PREFIX key2 message new'},
     });
+    expect(consoleInfoMock).toHaveBeenCalledWith(
+      expect.stringMatching(/2.* translations will be written/),
+    );
   });
 
-  test('should always override message description', async () => {
-    const {filePath, readFile} = await createTmpTranslationFile({
+  it('always overrides message description', async () => {
+    const {localizationDir, readFile} = await createTmpTranslationFile({
       key1: {message: 'key1 message', description: 'key1 desc'},
       key2: {message: 'key2 message', description: 'key2 desc'},
       key3: {message: 'key3 message', description: undefined},
     });
 
-    await writeTranslationFileContent({
-      filePath,
-      content: {
+    await writeCodeTranslations(
+      {localizationDir},
+      {
         key1: {message: 'key1 message new', description: undefined},
         key2: {message: 'key2 message new', description: 'key2 desc new'},
         key3: {message: 'key3 message new', description: 'key3 desc new'},
       },
-    });
+      {},
+    );
 
-    expect(await readFile()).toEqual({
+    await expect(readFile()).resolves.toEqual({
       key1: {message: 'key1 message', description: undefined},
       key2: {message: 'key2 message', description: 'key2 desc new'},
       key3: {message: 'key3 message', description: 'key3 desc new'},
     });
+    expect(consoleInfoMock).toHaveBeenCalledWith(
+      expect.stringMatching(/3.* translations will be written/),
+    );
   });
 
-  test('should always override message description', async () => {
-    const {filePath} = await createTmpTranslationFile(
+  it('does not create empty translation files', async () => {
+    const {localizationDir, readFile} = await createTmpTranslationFile(null);
+
+    await writeCodeTranslations({localizationDir}, {}, {});
+
+    await expect(readFile()).rejects.toThrow(
+      /ENOENT: no such file or directory, open /,
+    );
+    expect(consoleInfoMock).toHaveBeenCalledTimes(0);
+  });
+
+  it('throws for invalid content', async () => {
+    const {localizationDir} = await createTmpTranslationFile(
       // @ts-expect-error: bad content on purpose
       {bad: 'content'},
     );
 
-    await expect(
-      writeTranslationFileContent({
-        filePath,
-        content: {
+    await expect(() =>
+      writeCodeTranslations(
+        {localizationDir},
+        {
           key1: {message: 'key1 message'},
         },
-      }),
-    ).rejects.toThrowError(/Invalid translation file at/);
+
+        {},
+      ),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `""bad" must be of type object"`,
+    );
   });
 });
 
 describe('writePluginTranslations', () => {
-  test('should write plugin translations', async () => {
-    const siteDir = await createTmpSiteDir();
+  it('writes plugin translations', async () => {
+    const localizationDir = await createTmpSiteDir();
 
     const filePath = path.join(
-      siteDir,
-      'i18n',
-      'fr',
+      localizationDir,
       'my-plugin-name',
       'my/translation/file.json',
     );
 
     await writePluginTranslations({
-      siteDir,
-      locale: 'fr',
+      localizationDir,
       translationFile: {
         path: 'my/translation/file',
         content: {
@@ -296,29 +289,26 @@ describe('writePluginTranslations', () => {
           key3: {message: 'key3 message'},
         },
       },
-      // @ts-expect-error: enough for this test
       plugin: {
         name: 'my-plugin-name',
         options: {
-          id: undefined,
+          id: 'default',
         },
-      },
+      } as LoadedPlugin,
     });
 
-    expect(await readTranslationFileContent(filePath)).toEqual({
+    await expect(fs.readJSON(filePath)).resolves.toEqual({
       key1: {message: 'key1 message'},
       key2: {message: 'key2 message'},
       key3: {message: 'key3 message'},
     });
   });
 
-  test('should write plugin translations consecutively with different options', async () => {
-    const siteDir = await createTmpSiteDir();
+  it('writes plugin translations consecutively with different options', async () => {
+    const localizationDir = await createTmpSiteDir();
 
     const filePath = path.join(
-      siteDir,
-      'i18n',
-      'fr',
+      localizationDir,
       'my-plugin-name-my-plugin-id',
       'my/translation/file.json',
     );
@@ -328,7 +318,7 @@ describe('writePluginTranslations', () => {
       options?: WriteTranslationsOptions,
     ) {
       return writePluginTranslations({
-        siteDir,
+        localizationDir,
         locale: 'fr',
         translationFile: {
           path: 'my/translation/file',
@@ -345,14 +335,12 @@ describe('writePluginTranslations', () => {
       });
     }
 
-    expect(await readTranslationFileContent(filePath)).toEqual(undefined);
-
     await doWritePluginTranslations({
       key1: {message: 'key1 message', description: 'key1 desc'},
       key2: {message: 'key2 message', description: 'key2 desc'},
       key3: {message: 'key3 message', description: 'key3 desc'},
     });
-    expect(await readTranslationFileContent(filePath)).toEqual({
+    await expect(fs.readJSON(filePath)).resolves.toEqual({
       key1: {message: 'key1 message', description: 'key1 desc'},
       key2: {message: 'key2 message', description: 'key2 desc'},
       key3: {message: 'key3 message', description: 'key3 desc'},
@@ -365,7 +353,7 @@ describe('writePluginTranslations', () => {
       },
       {messagePrefix: 'PREFIX '},
     );
-    expect(await readTranslationFileContent(filePath)).toEqual({
+    await expect(fs.readJSON(filePath)).resolves.toEqual({
       key1: {message: 'key1 message', description: 'key1 desc'},
       key2: {message: 'key2 message', description: 'key2 desc'},
       key3: {message: 'key3 message', description: undefined},
@@ -381,18 +369,43 @@ describe('writePluginTranslations', () => {
       },
       {messagePrefix: 'PREFIX ', override: true},
     );
-    expect(await readTranslationFileContent(filePath)).toEqual({
+    await expect(fs.readJSON(filePath)).resolves.toEqual({
       key1: {message: 'PREFIX key1 message 3', description: 'key1 desc'},
       key2: {message: 'PREFIX key2 message 3', description: 'key2 desc'},
       key3: {message: 'PREFIX key3 message 3', description: 'key3 desc'},
       key4: {message: 'PREFIX key4 message 3', description: 'key4 desc'},
     });
   });
+
+  it('throws with explicit extension', async () => {
+    const localizationDir = await createTmpSiteDir();
+
+    await expect(() =>
+      writePluginTranslations({
+        localizationDir,
+        translationFile: {
+          path: 'my/translation/file.json',
+          content: {},
+        },
+
+        plugin: {
+          name: 'my-plugin-name',
+          options: {
+            id: 'my-plugin-id',
+          },
+        } as LoadedPlugin,
+
+        options: {},
+      }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Translation file path at "my/translation/file.json" does not need to end with ".json", we add the extension automatically."`,
+    );
+  });
 });
 
 describe('localizePluginTranslationFile', () => {
-  test('not localize if localized file does not exist', async () => {
-    const siteDir = await createTmpSiteDir();
+  it('does not localize if localized file does not exist', async () => {
+    const localizationDir = await createTmpSiteDir();
 
     const translationFile: TranslationFile = {
       path: 'my/translation/file',
@@ -404,35 +417,27 @@ describe('localizePluginTranslationFile', () => {
     };
 
     const localizedTranslationFile = await localizePluginTranslationFile({
-      siteDir,
-      locale: 'fr',
+      localizationDir,
       translationFile,
-      // @ts-expect-error: enough for this test
       plugin: {
         name: 'my-plugin-name',
         options: {},
-      },
+      } as LoadedPlugin,
     });
 
     expect(localizedTranslationFile).toEqual(translationFile);
   });
 
-  test('not localize if localized file does not exist', async () => {
-    const siteDir = await createTmpSiteDir();
+  it('normalizes partially localized translation files', async () => {
+    const localizationDir = await createTmpSiteDir();
 
-    await writeTranslationFileContent({
-      filePath: path.join(
-        siteDir,
-        'i18n',
-        'fr',
-        'my-plugin-name',
-        'my/translation/file.json',
-      ),
-      content: {
+    await fs.outputJSON(
+      path.join(localizationDir, 'my-plugin-name', 'my/translation/file.json'),
+      {
         key2: {message: 'key2 message localized'},
         key4: {message: 'key4 message localized'},
       },
-    });
+    );
 
     const translationFile: TranslationFile = {
       path: 'my/translation/file',
@@ -444,21 +449,20 @@ describe('localizePluginTranslationFile', () => {
     };
 
     const localizedTranslationFile = await localizePluginTranslationFile({
-      siteDir,
-      locale: 'fr',
+      localizationDir,
       translationFile,
-      // @ts-expect-error: enough for this test
       plugin: {
         name: 'my-plugin-name',
         options: {},
-      },
+      } as LoadedPlugin,
     });
 
     expect(localizedTranslationFile).toEqual({
       path: translationFile.path,
       content: {
-        // We only append/override localized messages, but never delete the data of the unlocalized translation file
-        // This ensures that all required keys are present when trying to read the translations files
+        // We only append/override localized messages, but never delete the data
+        // of the unlocalized translation file. This ensures that all required
+        // keys are present when trying to read the translations files
         key1: {message: 'key1 message'},
         key2: {message: 'key2 message localized'},
         key3: {message: 'key3 message'},
@@ -468,28 +472,93 @@ describe('localizePluginTranslationFile', () => {
   });
 });
 
-describe('getPluginsDefaultCodeTranslationMessages', () => {
+describe('readCodeTranslationFileContent', () => {
+  async function testReadTranslation(val: TranslationFileContent) {
+    const {localizationDir} = await createTmpTranslationFile(val);
+    return readCodeTranslationFileContent({localizationDir});
+  }
+
+  it("returns undefined if file does't exist", async () => {
+    await expect(
+      readCodeTranslationFileContent({localizationDir: 'foo'}),
+    ).resolves.toBeUndefined();
+  });
+
+  it('passes valid translation file content', async () => {
+    await expect(testReadTranslation({})).resolves.toEqual({});
+    await expect(testReadTranslation({key1: {message: ''}})).resolves.toEqual({
+      key1: {message: ''},
+    });
+    await expect(
+      testReadTranslation({key1: {message: 'abc', description: 'desc'}}),
+    ).resolves.toEqual({key1: {message: 'abc', description: 'desc'}});
+    await expect(
+      testReadTranslation({
+        key1: {message: 'abc', description: 'desc'},
+        key2: {message: 'def', description: 'desc'},
+      }),
+    ).resolves.toEqual({
+      key1: {message: 'abc', description: 'desc'},
+      key2: {message: 'def', description: 'desc'},
+    });
+  });
+
+  it('fails for invalid translation file content', async () => {
+    await expect(() =>
+      // @ts-expect-error: test
+      testReadTranslation('HEY'),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `""value" must be of type object"`,
+    );
+    await expect(() =>
+      // @ts-expect-error: test
+      testReadTranslation(42),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `""value" must be of type object"`,
+    );
+    await expect(() =>
+      // @ts-expect-error: test
+      testReadTranslation({key: {description: 'no message'}}),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`""key.message" is required"`);
+    await expect(() =>
+      // @ts-expect-error: test
+      testReadTranslation({key: {message: 42}}),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `""key.message" must be a string"`,
+    );
+    await expect(() =>
+      testReadTranslation({
+        // @ts-expect-error: test
+        key: {message: 'Message', description: 42},
+      }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `""key.description" must be a string"`,
+    );
+  });
+});
+
+describe('loadPluginsDefaultCodeTranslationMessages', () => {
   function createTestPlugin(
     fn: InitializedPlugin['getDefaultCodeTranslationMessages'],
   ): InitializedPlugin {
     return {getDefaultCodeTranslationMessages: fn} as InitializedPlugin;
   }
 
-  test('for empty plugins', async () => {
+  it('works for empty plugins', async () => {
     const plugins: InitializedPlugin[] = [];
     await expect(
-      getPluginsDefaultCodeTranslationMessages(plugins),
+      loadPluginsDefaultCodeTranslationMessages(plugins),
     ).resolves.toEqual({});
   });
 
-  test('for 1 plugin without lifecycle', async () => {
+  it('works for 1 plugin without lifecycle', async () => {
     const plugins: InitializedPlugin[] = [createTestPlugin(undefined)];
     await expect(
-      getPluginsDefaultCodeTranslationMessages(plugins),
+      loadPluginsDefaultCodeTranslationMessages(plugins),
     ).resolves.toEqual({});
   });
 
-  test('for 1 plugin with lifecycle', async () => {
+  it('works for 1 plugin with lifecycle', async () => {
     const plugins: InitializedPlugin[] = [
       createTestPlugin(async () => ({
         a: '1',
@@ -497,14 +566,14 @@ describe('getPluginsDefaultCodeTranslationMessages', () => {
       })),
     ];
     await expect(
-      getPluginsDefaultCodeTranslationMessages(plugins),
+      loadPluginsDefaultCodeTranslationMessages(plugins),
     ).resolves.toEqual({
       a: '1',
       b: '2',
     });
   });
 
-  test('for 2 plugins with lifecycles', async () => {
+  it('works for 2 plugins with lifecycles', async () => {
     const plugins: InitializedPlugin[] = [
       createTestPlugin(async () => ({
         a: '1',
@@ -516,7 +585,7 @@ describe('getPluginsDefaultCodeTranslationMessages', () => {
       })),
     ];
     await expect(
-      getPluginsDefaultCodeTranslationMessages(plugins),
+      loadPluginsDefaultCodeTranslationMessages(plugins),
     ).resolves.toEqual({
       a: '1',
       b: '2',
@@ -525,7 +594,7 @@ describe('getPluginsDefaultCodeTranslationMessages', () => {
     });
   });
 
-  test('for realistic use-case', async () => {
+  it('works for realistic use-case', async () => {
     const plugins: InitializedPlugin[] = [
       createTestPlugin(undefined),
       createTestPlugin(async () => ({
@@ -544,7 +613,7 @@ describe('getPluginsDefaultCodeTranslationMessages', () => {
       createTestPlugin(undefined),
     ];
     await expect(
-      getPluginsDefaultCodeTranslationMessages(plugins),
+      loadPluginsDefaultCodeTranslationMessages(plugins),
     ).resolves.toEqual({
       // merge, last plugin wins
       b: '2',
@@ -555,22 +624,24 @@ describe('getPluginsDefaultCodeTranslationMessages', () => {
 });
 
 describe('applyDefaultCodeTranslations', () => {
-  const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
+  const consoleWarnMock = jest
+    .spyOn(console, 'warn')
+    .mockImplementation(() => {});
   beforeEach(() => {
-    consoleSpy.mockClear();
+    consoleWarnMock.mockClear();
   });
 
-  test('for no code and message', () => {
+  it('works for no code and message', () => {
     expect(
       applyDefaultCodeTranslations({
         extractedCodeTranslations: {},
         defaultCodeMessages: {},
       }),
     ).toEqual({});
-    expect(consoleSpy).toHaveBeenCalledTimes(0);
+    expect(consoleWarnMock).toHaveBeenCalledTimes(0);
   });
 
-  test('for code and message', () => {
+  it('works for code and message', () => {
     expect(
       applyDefaultCodeTranslations({
         extractedCodeTranslations: {
@@ -589,10 +660,10 @@ describe('applyDefaultCodeTranslations', () => {
         description: 'description',
       },
     });
-    expect(consoleSpy).toHaveBeenCalledTimes(0);
+    expect(consoleWarnMock).toHaveBeenCalledTimes(0);
   });
 
-  test('for code and message mismatch', () => {
+  it('works for code and message mismatch', () => {
     expect(
       applyDefaultCodeTranslations({
         extractedCodeTranslations: {
@@ -611,11 +682,11 @@ describe('applyDefaultCodeTranslations', () => {
         description: 'description',
       },
     });
-    expect(consoleSpy).toHaveBeenCalledTimes(1);
-    expect(consoleSpy.mock.calls[0][0]).toMatch(/unknownId/);
+    expect(consoleWarnMock).toHaveBeenCalledTimes(1);
+    expect(consoleWarnMock.mock.calls[0]![0]).toMatch(/unknownId/);
   });
 
-  test('for realistic scenario', () => {
+  it('works for realistic scenario', () => {
     expect(
       applyDefaultCodeTranslations({
         extractedCodeTranslations: {
@@ -653,8 +724,8 @@ describe('applyDefaultCodeTranslations', () => {
         description: 'description 3',
       },
     });
-    expect(consoleSpy).toHaveBeenCalledTimes(1);
-    expect(consoleSpy.mock.calls[0][0]).toMatch(/idUnknown1/);
-    expect(consoleSpy.mock.calls[0][0]).toMatch(/idUnknown2/);
+    expect(consoleWarnMock).toHaveBeenCalledTimes(1);
+    expect(consoleWarnMock.mock.calls[0]![0]).toMatch(/idUnknown1/);
+    expect(consoleWarnMock.mock.calls[0]![0]).toMatch(/idUnknown2/);
   });
 });

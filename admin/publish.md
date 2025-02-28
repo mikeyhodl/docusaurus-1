@@ -10,7 +10,7 @@ Get access from the Docusaurus npm admins (@yangshun/@JoelMarcey).
 
 You need publish access to **the main Docusaurus repository** (not a fork).
 
-## NPM
+## npm
 
 Publishing will only work if you are logged into npm with an account with publishing rights to the package.
 
@@ -68,17 +68,28 @@ yarn serve
 
 This local test step is optional because it will be run by the CI on your release PR ([see](https://github.com/facebook/docusaurus/pull/2954/checks?check_run_id=780871959))
 
-### 3. Update the v2 changelog
+### 3. Update the changelog
 
-The changelog uses GitHub labels to classify each pull request. Use the GitHub interface to assign each newly merged pull request to a GitHub label starting with `tag:`, otherwise the PR won't appear in the changelog.
+The changelog uses GitHub labels to classify each pull request. Use the GitHub interface to assign each newly merged pull request to a GitHub label starting with `pr:`, otherwise the PR won't appear in the changelog.
 
-[Check tags of all recently merged Pull-Requests](https://github.com/facebook/docusaurus/pulls?q=is%3Apr+sort%3Aupdated-desc+is%3Amerged+)
+Not all labels will appear in the changelog—some are designed not to. However, you should **always** label each PR, so that before release, we can do a quick scan and confirm no PR is accidentally left out. Here's a search query (pity that GH doesn't have wildcard queries yet):
 
-The `tag:` label prefix is for PRs only. Other labels are not used by the changelog tool, and it's not necessary to assign such labels to issues, only PRs.
+```
+is:pr is:merged sort:updated-desc -label:"pr: breaking change","pr: new feature","pr: bug fix","pr: performance","pr: polish","pr: documentation","pr: maintenance","pr: internal","pr: dependencies","pr: showcase"
+```
+
+[Check tags of all recently merged Pull-Requests](https://github.com/facebook/docusaurus/pulls?q=is%3Apr+is%3Amerged+sort%3Aupdated-desc+-label%3A%22pr%3A+breaking+change%22%2C%22pr%3A+new+feature%22%2C%22pr%3A+bug+fix%22%2C%22pr%3A+performance%22%2C%22pr%3A+polish%22%2C%22pr%3A+documentation%22%2C%22pr%3A+maintenance%22%2C%22pr%3A+internal%22%2C%22pr%3A+dependencies%22%2C%22pr%3A+showcase%22)
+
+Some general principles about the labeling process:
+
+- "Will an average user be interested in this entry?" Items like "improve test coverage", "upgrade dependencies" can probably be left out (we have `pr: internal` and `pr: dependencies` for this). However, "pin GitHub actions to an SHA", "add visual testing infrastructure", etc., albeit internal, could be interesting to the user, and can be included in the "maintenance" section.
+- "Will this change have tangible impact on the user?" A common case is when a PR implements a feature X, then there are immediately follow-up PRs that fix bugs or polish feature X. These follow-up PRs don't necessarily have to be in the changelog, and even if they alter the API, they are not breaking changes, because to an average user bumping their version, they will only see the new feature X as a whole. Make the entries atomic.
+
+The `pr:` label prefix is for PRs only. Other labels are not used by the changelog tool, and it's not necessary to assign such labels to issues, only PRs.
 
 Generate a GitHub auth token by going to https://github.com/settings/tokens (the only permission needed is `public_repo`). Save the token somewhere for future reference.
 
-Fetch the tags from Github (lerna-changelog looks for commits since last tag by default):
+Fetch the tags from GitHub (lerna-changelog looks for commits since last tag by default):
 
 ```sh
 git fetch --tags
@@ -110,7 +121,7 @@ Test running the website with the new version locally.
 
 To keep versions number small, delete the oldest version and add a link to it in `archivedVersions.json`.
 
-Check [Netlify site deployments](https://app.netlify.com/sites/docusaurus-2/deploys) to pick a recent immutable deployment url.
+Check [Netlify site deployments](https://app.netlify.com/sites/docusaurus-2/deploys) to pick a recent immutable deployment URL.
 
 ### 5. Create a Pull Request
 
@@ -118,7 +129,7 @@ You should still be on your local branch `<your_username>/<version_to_release>`
 
 Make a commit/push, create a pull request with the changes.
 
-Example PR: [#3114](https://github.com/facebook/docusaurus/pull/5098), using title such as `chore(v2): prepare v2.0.0-beta.0 release`
+Example PR: [#3114](https://github.com/facebook/docusaurus/pull/5098), using title such as `chore: prepare v2.0.0-beta.0 release`
 
 **Don't merge it yet**, but wait for the CI checks to complete.
 
@@ -163,7 +174,7 @@ npm access ls-packages
 </pre>
 </details>
 
-It can happen that some accesses are not granted, as an admin might add you to the @docusaurus NPM organization, but you don't have access to the packages that are not in that organization.
+It can happen that some accesses are not granted, as an admin might add you to the @docusaurus npm organization, but you don't have access to the packages that are not in that organization.
 
 Please **double-check your permissions on these packages**, otherwise you'll publish a half-release and will have to release a new version.
 
@@ -176,7 +187,7 @@ If all accesses are available, build all the necessary packages, and then run th
 
 ```sh
 yarn build:packages
-yarn lerna publish --exact 2.0.0-beta.0
+yarn lerna publish  --force-publish --exact 2.0.0-beta.0
 ```
 
 This command does a few things:
@@ -186,6 +197,8 @@ This command does a few things:
 - Pushes the new release commit on your branch, and add a git tag
 
 You should receive many emails notifying you that a new version of the packages has been published.
+
+If above command fail (network issue or whatever), you can try to recover with `yarn lerna publish from-package`: it will try to publish the packages that are missing on npm.
 
 Now that the release is done, **merge the pull request**.
 
@@ -205,7 +218,7 @@ Create a separate branch/PR and run `yarn examples:generate`
 
 ### 9. Notify people about new release (optional but desirable)
 
-After new release, it is cool to notify our users about this in the Discord chat (`#announcements` channel) and write summaries on Twitter using the following templates.
+After new release, it is cool to notify our users about this in the Discord chat (`#announcements` channel) and write summaries on X using the following templates.
 
 For Discord:
 
@@ -214,7 +227,7 @@ A new version %VER% is available now! 🎉
 See release notes at the following link https://github.com/facebook/docusaurus/releases/tag/%VER%
 ```
 
-For Twitter:
+For X:
 
 ```
 💥 A new version %VER% is available now! 💥
