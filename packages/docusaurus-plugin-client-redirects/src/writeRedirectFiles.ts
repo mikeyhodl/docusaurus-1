@@ -7,25 +7,31 @@
 
 import fs from 'fs-extra';
 import path from 'path';
-import {memoize} from 'lodash';
-
-import {PluginContext, RedirectMetadata} from './types';
-import createRedirectPageContent from './createRedirectPageContent';
+import _ from 'lodash';
+import logger from '@docusaurus/logger';
 import {normalizeUrl} from '@docusaurus/utils';
+
+import createRedirectPageContent from './createRedirectPageContent';
+
+import type {PluginContext, RedirectItem} from './types';
 
 export type WriteFilesPluginContext = Pick<PluginContext, 'baseUrl' | 'outDir'>;
 
-export type RedirectFileMetadata = {
+export type RedirectFile = {
   fileAbsolutePath: string;
   fileContent: string;
 };
 
 export function createToUrl(baseUrl: string, to: string): string {
-  return normalizeUrl([baseUrl, to]);
+  if (to.startsWith('/')) {
+    return normalizeUrl([baseUrl, to]);
+  }
+  return to;
 }
 
 // Create redirect file path
-// Make sure this path has lower precedence over the original file path when served by host providers!
+// Make sure this path has lower precedence over the original file path when
+// served by host providers!
 // Otherwise it can produce infinite redirect loops!
 //
 // See https://github.com/facebook/docusaurus/issues/5055
@@ -39,32 +45,34 @@ function getRedirectFilePath(
   const filePath = path.dirname(fromPath);
   // Edge case for https://github.com/facebook/docusaurus/pull/5102
   // If the redirect source path is /xyz, with file /xyz.html
-  // We can't write the redirect file at /xyz.html/index.html because for Unix FS, a file/folder can't have the same name "xyz.html"
-  // The only possible solution for a redirect file is thus /xyz.html.html (I know, looks suspicious)
+  // We can't write the redirect file at /xyz.html/index.html because for Unix
+  // FS, a file/folder can't have the same name "xyz.html"
+  // The only possible solution for a redirect file is thus /xyz.html.html (I
+  // know, looks suspicious)
   if (trailingSlash === false && fileName.endsWith('.html')) {
     return path.join(filePath, `${fileName}.html`);
   }
-  // If the target path is /xyz, with file /xyz/index.html, we don't want the redirect file to be /xyz.html
-  // otherwise it would be picked in priority and the redirect file would redirect to itself
-  // We prefer the redirect file to be /xyz.html/index.html, served with lower priority for most static hosting tools
-  else {
-    return path.join(filePath, `${fileName}/index.html`);
-  }
+  // If the target path is /xyz, with file /xyz/index.html, we don't want the
+  // redirect file to be /xyz.html, otherwise it would be picked in priority and
+  // the redirect file would redirect to itself. We prefer the redirect file to
+  // be /xyz.html/index.html, served with lower priority for most static hosting
+  // tools
+  return path.join(filePath, `${fileName}/index.html`);
 }
 
-export function toRedirectFilesMetadata(
-  redirects: RedirectMetadata[],
+export function toRedirectFiles(
+  redirects: RedirectItem[],
   pluginContext: WriteFilesPluginContext,
   trailingSlash: boolean | undefined,
-): RedirectFileMetadata[] {
+): RedirectFile[] {
   // Perf: avoid rendering the template twice with the exact same "props"
   // We might create multiple redirect pages for the same destination url
   // note: the first fn arg is the cache key!
-  const createPageContentMemoized = memoize((toUrl: string) =>
+  const createPageContentMemoized = _.memoize((toUrl: string) =>
     createRedirectPageContent({toUrl}),
   );
 
-  const createFileMetadata = (redirect: RedirectMetadata) => {
+  const createFileMetadata = (redirect: RedirectItem) => {
     const fileRelativePath = getRedirectFilePath(redirect.from, trailingSlash);
     const fileAbsolutePath = path.join(pluginContext.outDir, fileRelativePath);
     const toUrl = createToUrl(pluginContext.baseUrl, redirect.to);
@@ -79,9 +87,7 @@ export function toRedirectFilesMetadata(
   return redirects.map(createFileMetadata);
 }
 
-export async function writeRedirectFile(
-  file: RedirectFileMetadata,
-): Promise<void> {
+export async function writeRedirectFile(file: RedirectFile): Promise<void> {
   try {
     // User-friendly security to prevent file overrides
     if (await fs.pathExists(file.fileAbsolutePath)) {
@@ -89,8 +95,7 @@ export async function writeRedirectFile(
         'The redirect plugin is not supposed to override existing files.',
       );
     }
-    await fs.ensureDir(path.dirname(file.fileAbsolutePath));
-    await fs.writeFile(
+    await fs.outputFile(
       file.fileAbsolutePath,
       file.fileContent,
       // Hard security to prevent file overrides
@@ -98,14 +103,13 @@ export async function writeRedirectFile(
       {flag: 'wx'},
     );
   } catch (err) {
-    throw new Error(
-      `Redirect file creation error for "${file.fileAbsolutePath}" path: ${err}.`,
-    );
+    logger.error`Redirect file creation error for path=${file.fileAbsolutePath}.`;
+    throw err;
   }
 }
 
 export default async function writeRedirectFiles(
-  redirectFiles: RedirectFileMetadata[],
+  redirectFiles: RedirectFile[],
 ): Promise<void> {
   await Promise.all(redirectFiles.map(writeRedirectFile));
 }

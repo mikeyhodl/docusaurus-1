@@ -14,8 +14,8 @@
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -29,11 +29,12 @@
 // Modified to optimize performance for Docusaurus specific use case
 // More context: https://github.com/facebook/docusaurus/pull/1839
 
-import {Compiler, Stats} from 'webpack';
 import path from 'path';
+import fs from 'fs-extra';
 import {sync as delSync} from 'del';
+import type {Compiler, Stats} from 'webpack';
 
-export interface Options {
+export type Options = {
   /**
    * Write Logs to Console
    * (Always enabled when dry is true)
@@ -65,9 +66,9 @@ export interface Options {
    * default: ['**\/*']
    */
   cleanOnceBeforeBuildPatterns?: string[];
-}
+};
 
-class CleanWebpackPlugin {
+export default class CleanWebpackPlugin {
   private readonly verbose: boolean;
   private readonly cleanStaleWebpackAssets: boolean;
   private readonly protectWebpackAssets: boolean;
@@ -116,7 +117,7 @@ class CleanWebpackPlugin {
   }
 
   apply(compiler: Compiler): void {
-    if (!compiler.options.output || !compiler.options.output.path) {
+    if (!compiler.options.output.path) {
       console.warn(
         'clean-webpack-plugin: options.output.path not defined. Plugin disabled...',
       );
@@ -144,11 +145,23 @@ class CleanWebpackPlugin {
    *
    * Only happens once.
    *
-   * Warning: It is recommended to initially clean your build directory outside of webpack to minimize unexpected behavior.
+   * Warning: It is recommended to initially clean your build directory outside
+   * of webpack to minimize unexpected behavior.
    */
   handleInitial(): void {
     if (this.initialClean) {
       return;
+    }
+
+    if (
+      // eslint-disable-next-line no-restricted-properties
+      fs.pathExistsSync(this.outputPath) &&
+      // eslint-disable-next-line no-restricted-properties
+      fs.statSync(this.outputPath).isFile()
+    ) {
+      throw new Error(
+        `A file '${this.outputPath}' already exists. Docusaurus needs this directory to save the build output. Either remove/change the file or choose a different build directory via '--out-dir'.`,
+      );
     }
 
     this.initialClean = true;
@@ -175,7 +188,7 @@ class CleanWebpackPlugin {
       stats.toJson({
         all: false,
         assets: true,
-      }).assets || [];
+      }).assets ?? [];
     const assets = statsAssets.map((asset: {name: string}) => asset.name);
 
     /**
@@ -184,7 +197,7 @@ class CleanWebpackPlugin {
      * (relies on del's cwd: outputPath option)
      */
     const staleFiles = this.currentAssets.filter(
-      (previousAsset) => assets.includes(previousAsset) === false,
+      (previousAsset) => !assets.includes(previousAsset),
     );
 
     /**
@@ -197,7 +210,7 @@ class CleanWebpackPlugin {
     /**
      * Remove unused webpack assets
      */
-    if (this.cleanStaleWebpackAssets === true && staleFiles.length !== 0) {
+    if (this.cleanStaleWebpackAssets && staleFiles.length !== 0) {
       removePatterns.push(...staleFiles);
     }
 
@@ -232,11 +245,10 @@ class CleanWebpackPlugin {
           console.warn(`clean-webpack-plugin: removed ${filename}`);
         });
       }
-    } catch (error) {
-      const needsForce =
-        /Cannot delete files\/folders outside the current working directory\./.test(
-          (error as Error).message,
-        );
+    } catch (err) {
+      const needsForce = (err as Error).message.includes(
+        'Cannot delete files/folders outside the current working directory.',
+      );
 
       if (needsForce) {
         const message =
@@ -245,9 +257,7 @@ class CleanWebpackPlugin {
         throw new Error(message);
       }
 
-      throw error;
+      throw err;
     }
   }
 }
-
-export default CleanWebpackPlugin;

@@ -5,19 +5,18 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import {InitializedPlugin} from '@docusaurus/types';
 import {ensureUniquePluginInstanceIds} from '../pluginIds';
+import type {InitializedPlugin} from '@docusaurus/types';
 
-function createTestPlugin(name: string, id?: string): InitializedPlugin {
-  // @ts-expect-error: good enough for tests
+function createTestPlugin(name: string, id?: string) {
   return {
     name,
-    options: {id},
-  };
+    options: {id: id ?? 'default'},
+  } as InitializedPlugin;
 }
 
 describe('ensureUniquePluginInstanceIds', () => {
-  test('accept single instance plugins', async () => {
+  it('accept single instance plugins', async () => {
     ensureUniquePluginInstanceIds([
       createTestPlugin('plugin-docs'),
       createTestPlugin('plugin-blog'),
@@ -25,7 +24,7 @@ describe('ensureUniquePluginInstanceIds', () => {
     ]);
   });
 
-  test('accept single instance plugins, all with sameId', async () => {
+  it('accept single instance plugins, all with sameId', async () => {
     ensureUniquePluginInstanceIds([
       createTestPlugin('plugin-docs', 'sameId'),
       createTestPlugin('plugin-blog', 'sameId'),
@@ -33,7 +32,7 @@ describe('ensureUniquePluginInstanceIds', () => {
     ]);
   });
 
-  test('accept multi instance plugins without id', async () => {
+  it('accept multi instance plugins without id', async () => {
     ensureUniquePluginInstanceIds([
       createTestPlugin('plugin-docs', 'ios'),
       createTestPlugin('plugin-docs', 'android'),
@@ -41,7 +40,7 @@ describe('ensureUniquePluginInstanceIds', () => {
     ]);
   });
 
-  test('reject multi instance plugins without id', async () => {
+  it('reject multi instance plugins without id', async () => {
     expect(() =>
       ensureUniquePluginInstanceIds([
         createTestPlugin('plugin-docs'),
@@ -50,7 +49,7 @@ describe('ensureUniquePluginInstanceIds', () => {
     ).toThrowErrorMatchingSnapshot();
   });
 
-  test('reject multi instance plugins with same id', async () => {
+  it('reject multi instance plugins with same id', async () => {
     expect(() =>
       ensureUniquePluginInstanceIds([
         createTestPlugin('plugin-docs', 'sameId'),
@@ -59,7 +58,7 @@ describe('ensureUniquePluginInstanceIds', () => {
     ).toThrowErrorMatchingSnapshot();
   });
 
-  test('reject multi instance plugins without id', async () => {
+  it('reject multi instance plugins with some without id', async () => {
     expect(() =>
       ensureUniquePluginInstanceIds([
         createTestPlugin('plugin-docs'),

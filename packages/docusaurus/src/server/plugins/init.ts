@@ -6,147 +6,86 @@
  */
 
 import {createRequire} from 'module';
-import importFresh from 'import-fresh';
-import {
-  DocusaurusPluginVersionInformation,
-  ImportedPluginModule,
-  LoadContext,
-  PluginModule,
-  PluginConfig,
-  PluginOptions,
-  InitializedPlugin,
-} from '@docusaurus/types';
-import {DEFAULT_PLUGIN_ID} from '../../constants';
-import {getPluginVersion} from '../versions';
-import {ensureUniquePluginInstanceIds} from './pluginIds';
+import path from 'path';
+import {DEFAULT_PLUGIN_ID} from '@docusaurus/utils';
 import {
   normalizePluginOptions,
   normalizeThemeConfig,
 } from '@docusaurus/utils-validation';
-
-type NormalizedPluginConfig = {
-  plugin: PluginModule;
-  options: PluginOptions;
-  // Only available when a string is provided in config
-  pluginModule?: {
-    path: string;
-    module: ImportedPluginModule;
-  };
-};
-
-function normalizePluginConfig(
-  pluginConfig: PluginConfig,
-  pluginRequire: NodeRequire,
-): NormalizedPluginConfig {
-  // plugins: ['./plugin']
-  if (typeof pluginConfig === 'string') {
-    const pluginModuleImport = pluginConfig;
-    const pluginPath = pluginRequire.resolve(pluginModuleImport);
-    const pluginModule = importFresh<ImportedPluginModule>(pluginPath);
-    return {
-      plugin: pluginModule?.default ?? pluginModule,
-      options: {},
-      pluginModule: {
-        path: pluginModuleImport,
-        module: pluginModule,
-      },
-    };
-  }
-
-  // plugins: [function plugin() { }]
-  if (typeof pluginConfig === 'function') {
-    return {
-      plugin: pluginConfig,
-      options: {},
-    };
-  }
-
-  if (Array.isArray(pluginConfig)) {
-    // plugins: [
-    //   ['./plugin',options],
-    // ]
-    if (typeof pluginConfig[0] === 'string') {
-      const pluginModuleImport = pluginConfig[0];
-      const pluginPath = pluginRequire.resolve(pluginModuleImport);
-      const pluginModule = importFresh<ImportedPluginModule>(pluginPath);
-      return {
-        plugin: pluginModule?.default ?? pluginModule,
-        options: pluginConfig[1] ?? {},
-        pluginModule: {
-          path: pluginModuleImport,
-          module: pluginModule,
-        },
-      };
-    }
-    // plugins: [
-    //   [function plugin() { },options],
-    // ]
-    if (typeof pluginConfig[0] === 'function') {
-      return {
-        plugin: pluginConfig[0],
-        options: pluginConfig[1] ?? {},
-      };
-    }
-  }
-
-  throw new Error(
-    `Unexpected: can't load plugin for following plugin config.\n${JSON.stringify(
-      pluginConfig,
-    )}`,
-  );
-}
+import {loadPluginVersion} from '../siteMetadata';
+import {ensureUniquePluginInstanceIds} from './pluginIds';
+import {loadPluginConfigs, type NormalizedPluginConfig} from './configs';
+import type {
+  PluginVersionInformation,
+  LoadContext,
+  PluginModule,
+  PluginOptions,
+  InitializedPlugin,
+} from '@docusaurus/types';
 
 function getOptionValidationFunction(
   normalizedPluginConfig: NormalizedPluginConfig,
 ): PluginModule['validateOptions'] {
   if (normalizedPluginConfig.pluginModule) {
-    // support both commonjs and ES modules
+    // Support both CommonJS and ES modules
     return (
-      normalizedPluginConfig.pluginModule.module?.default?.validateOptions ??
-      normalizedPluginConfig.pluginModule.module?.validateOptions
+      normalizedPluginConfig.pluginModule.module.default?.validateOptions ??
+      normalizedPluginConfig.pluginModule.module.validateOptions
     );
-  } else {
-    return normalizedPluginConfig.plugin.validateOptions;
   }
+  return normalizedPluginConfig.plugin.validateOptions;
 }
 
 function getThemeValidationFunction(
   normalizedPluginConfig: NormalizedPluginConfig,
 ): PluginModule['validateThemeConfig'] {
   if (normalizedPluginConfig.pluginModule) {
-    // support both commonjs and ES modules
+    // Support both CommonJS and ES modules
     return (
       normalizedPluginConfig.pluginModule.module.default?.validateThemeConfig ??
       normalizedPluginConfig.pluginModule.module.validateThemeConfig
     );
-  } else {
-    return normalizedPluginConfig.plugin.validateThemeConfig;
   }
+  return normalizedPluginConfig.plugin.validateThemeConfig;
 }
 
-export default function initPlugins({
-  pluginConfigs,
-  context,
-}: {
-  pluginConfigs: PluginConfig[];
-  context: LoadContext;
-}): InitializedPlugin[] {
-  // We need to resolve plugins from the perspective of the siteDir, since the siteDir's package.json
-  // declares the dependency on these plugins.
+type PluginConfigInitResult = {
+  config: NormalizedPluginConfig;
+  // Plugins might self-disable during initialization by returning null
+  plugin: InitializedPlugin | null;
+};
+
+// This filters self-disabling plugins and returns only the initialized ones
+function onlyInitializedPlugins(
+  initPluginsConfigsResults: PluginConfigInitResult[],
+): InitializedPlugin[] {
+  return initPluginsConfigsResults
+    .map((results) => results.plugin)
+    .filter((p) => p !== null);
+}
+
+/**
+ * Runs the plugin constructors and returns their return values. It would load
+ * plugin configs from `plugins`, `themes`, and `presets`.
+ */
+export async function initPluginsConfigs(
+  context: LoadContext,
+  pluginConfigs: NormalizedPluginConfig[],
+): Promise<PluginConfigInitResult[]> {
+  // We need to resolve plugins from the perspective of the site config, as if
+  // we are using `require.resolve` on those module names.
   const pluginRequire = createRequire(context.siteConfigPath);
 
-  function doGetPluginVersion(
+  async function doLoadPluginVersion(
     normalizedPluginConfig: NormalizedPluginConfig,
-  ): DocusaurusPluginVersionInformation {
-    // get plugin version
+  ): Promise<PluginVersionInformation> {
     if (normalizedPluginConfig.pluginModule?.path) {
       const pluginPath = pluginRequire.resolve(
-        normalizedPluginConfig.pluginModule?.path,
+        normalizedPluginConfig.pluginModule.path,
       );
-      return getPluginVersion(pluginPath, context.siteDir);
-    } else {
-      return {type: 'local'};
+      return loadPluginVersion(pluginPath, context.siteDir);
     }
+    return {type: 'local'};
   }
 
   function doValidateThemeConfig(
@@ -160,63 +99,104 @@ export default function initPlugins({
         validate: normalizeThemeConfig,
         themeConfig: context.siteConfig.themeConfig,
       });
-    } else {
-      return context.siteConfig.themeConfig;
     }
+    return context.siteConfig.themeConfig;
   }
 
   function doValidatePluginOptions(
     normalizedPluginConfig: NormalizedPluginConfig,
-  ) {
+  ): Required<PluginOptions> {
     const validateOptions = getOptionValidationFunction(normalizedPluginConfig);
     if (validateOptions) {
       return validateOptions({
         validate: normalizePluginOptions,
         options: normalizedPluginConfig.options,
       });
-    } else {
-      // Important to ensure all plugins have an id
-      // as we don't go through the Joi schema that adds it
-      return {
-        ...normalizedPluginConfig.options,
-        id: normalizedPluginConfig.options.id ?? DEFAULT_PLUGIN_ID,
-      };
     }
+    // Important to ensure all plugins have an id
+    // as we don't go through the Joi schema that adds it
+    return {
+      ...normalizedPluginConfig.options,
+      id: normalizedPluginConfig.options.id ?? DEFAULT_PLUGIN_ID,
+    };
   }
 
-  const plugins: InitializedPlugin[] = pluginConfigs
-    .map((pluginConfig) => {
-      if (!pluginConfig) {
-        return null;
-      }
-      const normalizedPluginConfig = normalizePluginConfig(
-        pluginConfig,
-        pluginRequire,
+  async function initializePlugin(
+    normalizedPluginConfig: NormalizedPluginConfig,
+  ): Promise<PluginConfigInitResult> {
+    const pluginVersion: PluginVersionInformation = await doLoadPluginVersion(
+      normalizedPluginConfig,
+    );
+    const pluginOptions = doValidatePluginOptions(normalizedPluginConfig);
+
+    // Side-effect: merge the normalized theme config in the original one
+    // Note: it's important to do this before calling the plugin constructor
+    // Example: the theme classic plugin will read siteConfig.themeConfig
+    context.siteConfig.themeConfig = {
+      ...context.siteConfig.themeConfig,
+      ...doValidateThemeConfig(normalizedPluginConfig),
+    };
+
+    const pluginInstance = await normalizedPluginConfig.plugin(
+      context,
+      pluginOptions,
+    );
+
+    // Returning null has been explicitly allowed
+    // It's a way for plugins to self-disable depending on context
+    // See https://github.com/facebook/docusaurus/pull/10286
+    if (pluginInstance === null) {
+      return {config: normalizedPluginConfig, plugin: null};
+    }
+    if (pluginInstance === undefined) {
+      throw new Error(
+        `A Docusaurus plugin returned 'undefined', which is forbidden.
+A plugin is expected to return an object having at least a 'name' property.
+If you want a plugin to self-disable depending on context/options, you can explicitly return 'null' instead of 'undefined'`,
       );
-      const pluginVersion: DocusaurusPluginVersionInformation =
-        doGetPluginVersion(normalizedPluginConfig);
-      const pluginOptions = doValidatePluginOptions(normalizedPluginConfig);
+    }
 
-      // Side-effect: merge the normalized theme config in the original one
-      context.siteConfig.themeConfig = {
-        ...context.siteConfig.themeConfig,
-        ...doValidateThemeConfig(normalizedPluginConfig),
-      };
-
-      const pluginInstance = normalizedPluginConfig.plugin(
-        context,
-        pluginOptions,
+    if (!pluginInstance?.name) {
+      throw new Error(
+        `A Docusaurus plugin is missing a 'name' property.
+Note that even inline/anonymous plugin functions require a 'name' property.`,
       );
+    }
 
-      return {
-        ...pluginInstance,
-        options: pluginOptions,
-        version: pluginVersion,
-      };
-    })
-    .filter(<T>(item: T): item is Exclude<T, null> => Boolean(item));
+    const plugin: InitializedPlugin = {
+      ...pluginInstance,
+      options: pluginOptions,
+      version: pluginVersion,
+      path: path.dirname(normalizedPluginConfig.entryPath),
+    };
 
-  ensureUniquePluginInstanceIds(plugins);
+    return {
+      config: normalizedPluginConfig,
+      plugin,
+    };
+  }
+
+  const plugins: PluginConfigInitResult[] = (
+    await Promise.all(pluginConfigs.map(initializePlugin))
+  ).filter((p) => p !== null);
+
+  ensureUniquePluginInstanceIds(onlyInitializedPlugins(plugins));
 
   return plugins;
+}
+
+/**
+ * Runs the plugin constructors and returns their return values
+ * for all the site context plugins that do not return null to self-disable.
+ */
+export async function initPlugins(
+  context: LoadContext,
+): Promise<InitializedPlugin[]> {
+  const pluginConfigs = await loadPluginConfigs(context);
+  const initPluginsConfigsResults = await initPluginsConfigs(
+    context,
+    pluginConfigs,
+  );
+
+  return onlyInitializedPlugins(initPluginsConfigsResults);
 }

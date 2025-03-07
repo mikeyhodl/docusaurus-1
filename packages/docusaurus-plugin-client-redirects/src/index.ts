@@ -5,28 +5,36 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import {LoadContext, Plugin, Props} from '@docusaurus/types';
-import {UserPluginOptions, PluginContext, RedirectMetadata} from './types';
-
-import normalizePluginOptions from './normalizePluginOptions';
+import {addLeadingSlash, removePrefix} from '@docusaurus/utils-common';
+import logger from '@docusaurus/logger';
 import collectRedirects from './collectRedirects';
 import writeRedirectFiles, {
-  toRedirectFilesMetadata,
-  RedirectFileMetadata,
+  toRedirectFiles,
+  type RedirectFile,
 } from './writeRedirectFiles';
-import {removePrefix, addLeadingSlash} from '@docusaurus/utils';
+import type {LoadContext, Plugin} from '@docusaurus/types';
+import type {PluginContext, RedirectItem} from './types';
+import type {PluginOptions, Options} from './options';
+
+const PluginName = 'docusaurus-plugin-client-redirects';
 
 export default function pluginClientRedirectsPages(
   context: LoadContext,
-  opts: UserPluginOptions,
-): Plugin<unknown> {
+  options: PluginOptions,
+): Plugin<void> | null {
   const {trailingSlash} = context.siteConfig;
+  const router = context.siteConfig.future.experimental_router;
 
-  const options = normalizePluginOptions(opts);
+  if (router === 'hash') {
+    logger.warn(
+      `${PluginName} does not support the Hash Router and will be disabled.`,
+    );
+    return null;
+  }
 
   return {
-    name: 'docusaurus-plugin-client-redirects',
-    async postBuild(props: Props) {
+    name: PluginName,
+    async postBuild(props) {
       const pluginContext: PluginContext = {
         relativeRoutesPaths: props.routesPaths.map(
           (path) => `${addLeadingSlash(removePrefix(path, props.baseUrl))}`,
@@ -34,14 +42,15 @@ export default function pluginClientRedirectsPages(
         baseUrl: props.baseUrl,
         outDir: props.outDir,
         options,
+        siteConfig: props.siteConfig,
       };
 
-      const redirects: RedirectMetadata[] = collectRedirects(
+      const redirects: RedirectItem[] = collectRedirects(
         pluginContext,
         trailingSlash,
       );
 
-      const redirectFiles: RedirectFileMetadata[] = toRedirectFilesMetadata(
+      const redirectFiles: RedirectFile[] = toRedirectFiles(
         redirects,
         pluginContext,
         trailingSlash,
@@ -52,3 +61,6 @@ export default function pluginClientRedirectsPages(
     },
   };
 }
+
+export {validateOptions} from './options';
+export type {PluginOptions, Options};

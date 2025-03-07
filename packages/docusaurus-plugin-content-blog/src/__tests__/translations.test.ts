@@ -5,10 +5,14 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import {BlogPost, BlogContent, PluginOptions} from '../types';
-import {getTranslationFiles, translateContent} from '../translations';
-import {DEFAULT_OPTIONS} from '../pluginOptionSchema';
 import {updateTranslationFileMessages} from '@docusaurus/utils';
+import {getTranslationFiles, translateContent} from '../translations';
+import {DEFAULT_OPTIONS} from '../options';
+import type {
+  PluginOptions,
+  BlogPost,
+  BlogContent,
+} from '@docusaurus/plugin-content-blog';
 
 const sampleBlogOptions: PluginOptions = {
   ...DEFAULT_OPTIONS,
@@ -25,11 +29,14 @@ const sampleBlogPosts: BlogPost[] = [
       source: '/blog/2021/06/19/hello',
       description: '/blog/2021/06/19/hello',
       date: new Date(2021, 6, 19),
-      formattedDate: 'June 19, 2021',
       tags: [],
       title: 'Hello',
-      truncated: true,
+      hasTruncateMarker: true,
+      authors: [],
+      frontMatter: {},
+      unlisted: false,
     },
+    content: '',
   },
 ];
 
@@ -44,8 +51,8 @@ const sampleBlogContent: BlogContent = {
         postsPerPage: 10,
         totalPages: 1,
         totalCount: 1,
-        previousPage: null,
-        nextPage: null,
+        previousPage: undefined,
+        nextPage: undefined,
         blogTitle: sampleBlogOptions.blogTitle,
         blogDescription: sampleBlogOptions.blogDescription,
       },
@@ -70,20 +77,26 @@ function getSampleTranslationFilesTranslated() {
 }
 
 describe('getContentTranslationFiles', () => {
-  test('should return translation files matching snapshot', async () => {
+  it('returns translation files matching snapshot', () => {
     expect(getSampleTranslationFiles()).toMatchSnapshot();
   });
 });
 
 describe('translateContent', () => {
-  test('should not translate anything if translation files are untranslated', () => {
+  it('falls back when translation is incomplete', () => {
+    expect(
+      translateContent(sampleBlogContent, [{path: 'foo', content: {}}]),
+    ).toMatchSnapshot();
+  });
+
+  it('does not translate anything if translation files are untranslated', () => {
     const translationFiles = getSampleTranslationFiles();
     expect(translateContent(sampleBlogContent, translationFiles)).toEqual(
       sampleBlogContent,
     );
   });
 
-  test('should return translated loaded content matching snapshot', () => {
+  it('returns translated loaded', () => {
     const translationFiles = getSampleTranslationFilesTranslated();
     expect(
       translateContent(sampleBlogContent, translationFiles),

@@ -1,11 +1,10 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "../../tsconfig.base.json",
+  "references": [{"path": "./tsconfig.build.json"}],
   "compilerOptions": {
-    "incremental": true,
-    "tsBuildInfoFile": "./lib/.tsbuildinfo",
-    "rootDir": "src",
-    "outDir": "lib"
+    "noEmit": true,
+    "rootDir": "."
   },
-  "include": ["src/"],
-  "exclude": ["templates/"]
+  "include": ["package.json", "bin"],
+  "exclude": ["**/__tests__/**"]
 }

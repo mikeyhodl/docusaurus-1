@@ -7,122 +7,91 @@
 
 import path from 'path';
 
-import {loadContext, LoadContextOptions, loadPluginConfigs} from '../../index';
-import initPlugins from '../init';
-import {sortConfig} from '../index';
-import {RouteConfig} from '@docusaurus/types';
+import {loadContext, type LoadContextParams} from '../../site';
+import {initPlugins} from '../init';
+
+async function loadSite(
+  fixtureName: string,
+  options: Omit<LoadContextParams, 'siteDir'> = {},
+) {
+  const siteDir = path.join(__dirname, '__fixtures__', fixtureName);
+  const context = await loadContext({...options, siteDir});
+  const plugins = await initPlugins(context);
+
+  return {siteDir, context, plugins};
+}
 
 describe('initPlugins', () => {
-  async function loadSite(options: LoadContextOptions = {}) {
-    const siteDir = path.join(__dirname, '__fixtures__', 'site-with-plugin');
-    const context = await loadContext(siteDir, options);
-    const pluginConfigs = loadPluginConfigs(context);
-    const plugins = initPlugins({
-      pluginConfigs,
-      context,
+  it('parses plugins correctly and loads them in correct order', async () => {
+    const {context, plugins} = await loadSite('site-with-plugin');
+    expect(context.siteConfig.plugins).toHaveLength(7);
+    expect(plugins).toHaveLength(10);
+
+    expect(plugins[0]!.name).toBe('preset-plugin1');
+    expect(plugins[1]!.name).toBe('preset-plugin2');
+    expect(plugins[2]!.name).toBe('preset-theme1');
+    expect(plugins[3]!.name).toBe('preset-theme2');
+    expect(plugins[4]!.name).toBe('first-plugin');
+    expect(plugins[5]!.name).toBe('second-plugin');
+    expect(plugins[6]!.name).toBe('third-plugin');
+    expect(plugins[7]!.name).toBe('fourth-plugin');
+    expect(context.siteConfig.themeConfig).toEqual({
+      a: 1,
+      esmPlugin: {
+        joi: true,
+      },
+      tsPlugin: {
+        joi: true,
+      },
     });
-
-    return {siteDir, context, plugins};
-  }
-
-  test('plugins gets parsed correctly and loads in correct order', async () => {
-    const {context, plugins} = await loadSite();
-    expect(context.siteConfig.plugins?.length).toBe(4);
-    expect(plugins.length).toBe(4);
-
-    expect(plugins[0].name).toBe('first-plugin');
-    expect(plugins[1].name).toBe('second-plugin');
-    expect(plugins[2].name).toBe('third-plugin');
-    expect(plugins[3].name).toBe('fourth-plugin');
   });
 
-  test('plugins with bad values throw user-friendly error message', async () => {
+  it('throws user-friendly error message for plugins with bad values', async () => {
     await expect(() =>
-      loadSite({
-        customConfigFilePath: 'badPlugins.docusaurus.config.js',
-      }),
-    ).rejects.toThrowErrorMatchingSnapshot();
-  });
-});
-
-describe('sortConfig', () => {
-  test('should sort route config correctly', () => {
-    const routes: RouteConfig[] = [
+      loadSite('site-with-plugin', {config: 'badPlugins.docusaurus.config.js'}),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(`
+      " => Bad Docusaurus plugin value plugins[0].
+      Example valid plugin config:
       {
-        path: '/',
-        component: '',
-        routes: [
-          {path: '/someDoc', component: ''},
-          {path: '/someOtherDoc', component: ''},
+        plugins: [
+          ["@docusaurus/plugin-content-docs",options],
+          "./myPlugin",
+          ["./myPlugin",{someOption: 42}],
+          function myPlugin() { },
+          [function myPlugin() { },options]
         ],
-      },
+      };
+
+       => Bad Docusaurus plugin value plugins[1].
+      Example valid plugin config:
       {
-        path: '/',
-        component: '',
-      },
-      {
-        path: '/',
-        component: '',
-        routes: [{path: '/subroute', component: ''}],
-      },
-      {
-        path: '/docs',
-        component: '',
-        routes: [
-          {path: '/docs/someDoc', component: ''},
-          {path: '/docs/someOtherDoc', component: ''},
+        plugins: [
+          ["@docusaurus/plugin-content-docs",options],
+          "./myPlugin",
+          ["./myPlugin",{someOption: 42}],
+          function myPlugin() { },
+          [function myPlugin() { },options]
         ],
-      },
-      {
-        path: '/community',
-        component: '',
-      },
-      {
-        path: '/some-page',
-        component: '',
-      },
-    ];
+      };
 
-    sortConfig(routes);
-
-    expect(routes).toMatchSnapshot();
+      "
+    `);
   });
 
-  test('should sort route config given a baseURL', () => {
-    const baseURL = '/latest';
-    const routes: RouteConfig[] = [
-      {
-        path: baseURL,
-        component: '',
-        routes: [
-          {path: `${baseURL}/someDoc`, component: ''},
-          {path: `${baseURL}/someOtherDoc`, component: ''},
-        ],
-      },
-      {
-        path: `${baseURL}/example`,
-        component: '',
-      },
-      {
-        path: `${baseURL}/docs`,
-        component: '',
-        routes: [
-          {path: `${baseURL}/docs/someDoc`, component: ''},
-          {path: `${baseURL}/docs/someOtherDoc`, component: ''},
-        ],
-      },
-      {
-        path: `${baseURL}/community`,
-        component: '',
-      },
-      {
-        path: `${baseURL}/some-page`,
-        component: '',
-      },
-    ];
+  it('throws user-friendly error message for plugins with no name', async () => {
+    await expect(() => loadSite('site-with-unnamed-plugin')).rejects
+      .toThrowErrorMatchingInlineSnapshot(`
+      "A Docusaurus plugin is missing a 'name' property.
+      Note that even inline/anonymous plugin functions require a 'name' property."
+    `);
+  });
 
-    sortConfig(routes, baseURL);
-
-    expect(routes).toMatchSnapshot();
+  it('throws user-friendly error message for plugins returning undefined', async () => {
+    await expect(() => loadSite('site-with-undefined-plugin')).rejects
+      .toThrowErrorMatchingInlineSnapshot(`
+      "A Docusaurus plugin returned 'undefined', which is forbidden.
+      A plugin is expected to return an object having at least a 'name' property.
+      If you want a plugin to self-disable depending on context/options, you can explicitly return 'null' instead of 'undefined'"
+    `);
   });
 });

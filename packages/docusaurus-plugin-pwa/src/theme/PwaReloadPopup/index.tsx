@@ -5,15 +5,14 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import React, {useState} from 'react';
+import React, {type ReactNode, useState} from 'react';
 import clsx from 'clsx';
 import Translate, {translate} from '@docusaurus/Translate';
-
-import type {PwaReloadPopupProps} from '@theme/PwaReloadPopup';
+import type {Props} from '@theme/PwaReloadPopup';
 
 import styles from './styles.module.css';
 
-function PwaReloadPopup({onReload}: PwaReloadPopupProps): JSX.Element | false {
+export default function PwaReloadPopup({onReload}: Props): ReactNode {
   const [isVisible, setIsVisible] = useState(true);
 
   return (
@@ -58,5 +57,3 @@ function PwaReloadPopup({onReload}: PwaReloadPopupProps): JSX.Element | false {
     )
   );
 }
-
-export default PwaReloadPopup;

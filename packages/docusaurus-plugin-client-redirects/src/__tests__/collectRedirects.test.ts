@@ -5,25 +5,30 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import {PluginContext, UserPluginOptions} from '../types';
+import {removeTrailingSlash} from '@docusaurus/utils-common';
+import {normalizePluginOptions} from '@docusaurus/utils-validation';
 import collectRedirects from '../collectRedirects';
-import normalizePluginOptions from '../normalizePluginOptions';
-import {removeTrailingSlash} from '@docusaurus/utils';
+import {validateOptions} from '../options';
+import type {DocusaurusConfig} from '@docusaurus/types';
+import type {Options} from '../options';
+import type {PluginContext} from '../types';
 
 function createTestPluginContext(
-  options?: UserPluginOptions,
+  options?: Options,
   relativeRoutesPaths: string[] = [],
+  siteConfig: Partial<DocusaurusConfig> = {},
 ): PluginContext {
   return {
     outDir: '/tmp',
     baseUrl: 'https://docusaurus.io',
     relativeRoutesPaths,
-    options: normalizePluginOptions(options),
+    options: validateOptions({validate: normalizePluginOptions, options}),
+    siteConfig: {onDuplicateRoutes: 'warn', ...siteConfig} as DocusaurusConfig,
   };
 }
 
 describe('collectRedirects', () => {
-  test('should collect no redirect for undefined config', () => {
+  it('collects no redirect for undefined config', () => {
     expect(
       collectRedirects(
         createTestPluginContext(undefined, ['/', '/path']),
@@ -32,13 +37,13 @@ describe('collectRedirects', () => {
     ).toEqual([]);
   });
 
-  test('should collect no redirect for empty config', () => {
+  it('collects no redirect for empty config', () => {
     expect(collectRedirects(createTestPluginContext({}), undefined)).toEqual(
       [],
     );
   });
 
-  test('should collect redirects to html/exe extension', () => {
+  it('collects redirects from html/exe extension', () => {
     expect(
       collectRedirects(
         createTestPluginContext(
@@ -61,7 +66,7 @@ describe('collectRedirects', () => {
     ]);
   });
 
-  test('should collect redirects to html/exe extension', () => {
+  it('collects redirects to html/exe extension', () => {
     expect(
       collectRedirects(
         createTestPluginContext(
@@ -80,7 +85,7 @@ describe('collectRedirects', () => {
     ]);
   });
 
-  test('should collect redirects from plugin option redirects', () => {
+  it('collects redirects from plugin option redirects', () => {
     expect(
       collectRedirects(
         createTestPluginContext(
@@ -91,12 +96,50 @@ describe('collectRedirects', () => {
                 to: '/somePath',
               },
               {
+                from: '/someLegacyPath2',
+                to: '/some Path2',
+              },
+              {
+                from: '/someLegacyPath3',
+                to: '/some%20Path3',
+              },
+              {
                 from: ['/someLegacyPathArray1', '/someLegacyPathArray2'],
                 to: '/',
               },
+
+              {
+                from: '/localQS',
+                to: '/somePath?a=1&b=2',
+              },
+              {
+                from: '/localAnchor',
+                to: '/somePath#anchor',
+              },
+              {
+                from: '/localQSAnchor',
+                to: '/somePath?a=1&b=2#anchor',
+              },
+
+              {
+                from: '/absolute',
+                to: 'https://docusaurus.io/somePath',
+              },
+              {
+                from: '/absoluteQS',
+                to: 'https://docusaurus.io/somePath?a=1&b=2',
+              },
+              {
+                from: '/absoluteAnchor',
+                to: 'https://docusaurus.io/somePath#anchor',
+              },
+              {
+                from: '/absoluteQSAnchor',
+                to: 'https://docusaurus.io/somePath?a=1&b=2#anchor',
+              },
             ],
           },
-          ['/', '/somePath'],
+          ['/', '/somePath', '/some%20Path2', '/some Path3'],
         ),
         undefined,
       ),
@@ -106,6 +149,14 @@ describe('collectRedirects', () => {
         to: '/somePath',
       },
       {
+        from: '/someLegacyPath2',
+        to: '/some Path2',
+      },
+      {
+        from: '/someLegacyPath3',
+        to: '/some%20Path3',
+      },
+      {
         from: '/someLegacyPathArray1',
         to: '/',
       },
@@ -113,10 +164,39 @@ describe('collectRedirects', () => {
         from: '/someLegacyPathArray2',
         to: '/',
       },
+      {
+        from: '/localQS',
+        to: '/somePath?a=1&b=2',
+      },
+      {
+        from: '/localAnchor',
+        to: '/somePath#anchor',
+      },
+      {
+        from: '/localQSAnchor',
+        to: '/somePath?a=1&b=2#anchor',
+      },
+
+      {
+        from: '/absolute',
+        to: 'https://docusaurus.io/somePath',
+      },
+      {
+        from: '/absoluteQS',
+        to: 'https://docusaurus.io/somePath?a=1&b=2',
+      },
+      {
+        from: '/absoluteAnchor',
+        to: 'https://docusaurus.io/somePath#anchor',
+      },
+      {
+        from: '/absoluteQSAnchor',
+        to: 'https://docusaurus.io/somePath?a=1&b=2#anchor',
+      },
     ]);
   });
 
-  test('should collect redirects from plugin option redirects with trailingSlash=true', () => {
+  it('collects redirects from plugin option redirects with trailingSlash=true', () => {
     expect(
       collectRedirects(
         createTestPluginContext(
@@ -152,7 +232,7 @@ describe('collectRedirects', () => {
     ]);
   });
 
-  test('should collect redirects from plugin option redirects with trailingSlash=false', () => {
+  it('collects redirects from plugin option redirects with trailingSlash=false', () => {
     expect(
       collectRedirects(
         createTestPluginContext(
@@ -188,7 +268,7 @@ describe('collectRedirects', () => {
     ]);
   });
 
-  test('should throw if plugin option redirects contain invalid to paths', () => {
+  it('throw if plugin option redirects contain invalid to paths', () => {
     expect(() =>
       collectRedirects(
         createTestPluginContext(
@@ -204,7 +284,11 @@ describe('collectRedirects', () => {
               },
               {
                 from: '/someLegacyPath',
-                to: '/this/path/does/not/exist2',
+                to: '/this/path/does/not/exist3',
+              },
+              {
+                from: '/someLegacyPath',
+                to: '/this/path/does/not/exist4?a=b#anchor',
               },
             ],
           },
@@ -215,7 +299,70 @@ describe('collectRedirects', () => {
     ).toThrowErrorMatchingSnapshot();
   });
 
-  test('should collect redirects with custom redirect creator', () => {
+  it('tolerates mismatched trailing slash if option is undefined', () => {
+    expect(
+      collectRedirects(
+        createTestPluginContext(
+          {
+            redirects: [
+              {
+                from: '/someLegacyPath',
+                to: '/somePath',
+              },
+            ],
+          },
+          ['/', '/somePath/'],
+          {trailingSlash: undefined},
+        ),
+        undefined,
+      ),
+    ).toEqual([
+      {
+        from: '/someLegacyPath',
+        to: '/somePath',
+      },
+    ]);
+  });
+
+  it('throw if plugin option redirects contain to paths with mismatching trailing slash', () => {
+    expect(() =>
+      collectRedirects(
+        createTestPluginContext(
+          {
+            redirects: [
+              {
+                from: '/someLegacyPath',
+                to: '/someExistingPath/',
+              },
+            ],
+          },
+          ['/', '/someExistingPath', '/anotherExistingPath'],
+          {trailingSlash: false},
+        ),
+        undefined,
+      ),
+    ).toThrowErrorMatchingSnapshot();
+
+    expect(() =>
+      collectRedirects(
+        createTestPluginContext(
+          {
+            redirects: [
+              {
+                from: '/someLegacyPath',
+                to: '/someExistingPath',
+              },
+            ],
+          },
+          ['/', '/someExistingPath/', '/anotherExistingPath/'],
+          {trailingSlash: true},
+        ),
+        undefined,
+      ),
+    ).toThrowErrorMatchingSnapshot();
+  });
+
+  it('collects redirects with custom redirect creator', () => {
     expect(
       collectRedirects(
         createTestPluginContext(
@@ -225,7 +372,7 @@ describe('collectRedirects', () => {
               `${removeTrailingSlash(routePath)}/some/other/path/suffix2`,
             ],
           },
-          ['/', '/testpath', '/otherPath.html'],
+          ['/', '/testPath', '/otherPath.html'],
         ),
         undefined,
       ),
@@ -240,12 +387,12 @@ describe('collectRedirects', () => {
       },
 
       {
-        from: '/testpath/some/path/suffix1',
-        to: '/testpath',
+        from: '/testPath/some/path/suffix1',
+        to: '/testPath',
       },
       {
-        from: '/testpath/some/other/path/suffix2',
-        to: '/testpath',
+        from: '/testPath/some/other/path/suffix2',
+        to: '/testPath',
       },
 
       {
@@ -259,7 +406,26 @@ describe('collectRedirects', () => {
     ]);
   });
 
-  test('should throw if redirect creator creates invalid redirects', () => {
+  it('allows returning string / undefined', () => {
+    expect(
+      collectRedirects(
+        createTestPluginContext(
+          {
+            createRedirects: (routePath) => {
+              if (routePath === '/') {
+                return `${routePath}foo`;
+              }
+              return undefined;
+            },
+          },
+          ['/', '/testPath', '/otherPath.html'],
+        ),
+        undefined,
+      ),
+    ).toEqual([{from: '/foo', to: '/'}]);
+  });
+
+  it('throws if redirect creator creates invalid redirects', () => {
     expect(() =>
       collectRedirects(
         createTestPluginContext(
@@ -282,14 +448,15 @@ describe('collectRedirects', () => {
     ).toThrowErrorMatchingSnapshot();
   });
 
-  test('should throw if redirect creator creates array of array redirect', () => {
+  it('throws if redirect creator creates array of array redirect', () => {
     expect(() =>
       collectRedirects(
         createTestPluginContext(
           {
-            createRedirects: (routePath) => {
+            // @ts-expect-error: for test
+            createRedirects(routePath) {
               if (routePath === '/') {
-                return [[`/fromPath`]] as unknown as string;
+                return [[`/fromPath`]];
               }
               return undefined;
             },
@@ -301,7 +468,7 @@ describe('collectRedirects', () => {
     ).toThrowErrorMatchingSnapshot();
   });
 
-  test('should filter unwanted redirects', () => {
+  it('filters unwanted redirects', () => {
     expect(
       collectRedirects(
         createTestPluginContext(
@@ -334,5 +501,45 @@ describe('collectRedirects', () => {
         to: '/fromShouldWork.html',
       },
     ]);
+  });
+
+  it('throws when creating duplicate redirect routes and onDuplicateRoutes=throw', () => {
+    expect(() =>
+      collectRedirects(
+        createTestPluginContext(
+          {
+            createRedirects() {
+              return '/random-path';
+            },
+          },
+          ['/path-one', '/path-two'],
+          {onDuplicateRoutes: 'throw'},
+        ),
+        undefined,
+      ),
+    ).toThrowErrorMatchingInlineSnapshot(`
+      "@docusaurus/plugin-client-redirects: multiple redirects are created with the same "from" pathname: "/random-path"
+      It is not possible to redirect the same pathname to multiple destinations:
+      - {"from":"/random-path","to":"/path-one"}
+      - {"from":"/random-path","to":"/path-two"}"
+    `);
+    expect(() =>
+      collectRedirects(
+        createTestPluginContext(
+          {
+            redirects: [
+              {from: '/path-three', to: '/path-one'},
+              {from: '/path-two', to: '/path-one'},
+            ],
+          },
+          ['/path-one', '/path-two'],
+          {onDuplicateRoutes: 'throw'},
+        ),
+        undefined,
+      ),
+    ).toThrowErrorMatchingInlineSnapshot(`
+      "@docusaurus/plugin-client-redirects: some redirects would override existing paths, and will be ignored:
+      - {"from":"/path-two","to":"/path-one"}"
+    `);
   });
 });

@@ -5,12 +5,13 @@ slug: bazSlug.html
 pagination_label: baz pagination_label
 tags:
   - tag 1
+  - globalTag1
   - tag-1
   - label: tag 2
     permalink: tag2-custom-permalink
 ---
 
-# Baz markdown title
+# Baz Markdown title
 
 ## Images
 
@@ -70,6 +71,6 @@ Term 2 ~ Definition 2a ~ Definition 2b
 
 This is HTML abbreviation example.
 
-It converts "HTML", but keep intact partial entries like "xxxHTMLyyy" and so on.
+It converts "HTML", but keep intact partial entries like "xxxHTMLxxx" and so on.
 
 \*[HTML]: Hyper Text Markup Language

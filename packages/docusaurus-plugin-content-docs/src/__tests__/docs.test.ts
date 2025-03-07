@@ -5,46 +5,54 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import path from 'path';
-import {loadContext} from '@docusaurus/core/src/server/index';
+import {jest} from '@jest/globals';
+import * as path from 'path';
+import {loadContext} from '@docusaurus/core/src/server/site';
+import {
+  createSlugger,
+  posixPath,
+  DEFAULT_PLUGIN_ID,
+  LAST_UPDATE_FALLBACK,
+} from '@docusaurus/utils';
+import {getTagsFile} from '@docusaurus/utils-validation';
+import {createSidebarsUtils} from '../sidebars/utils';
 import {
   processDocMetadata,
   readVersionDocs,
   readDocFile,
   addDocNavigation,
-  isConventionalDocIndex,
+  isCategoryIndex,
+  type DocEnv,
 } from '../docs';
 import {loadSidebars} from '../sidebars';
 import {readVersionsMetadata} from '../versions';
+import {DEFAULT_OPTIONS} from '../options';
+import type {Sidebars} from '../sidebars/types';
+import type {DocFile} from '../types';
 import type {
-  DocFile,
-  DocMetadataBase,
   MetadataOptions,
-  VersionMetadata,
   PluginOptions,
   EditUrlFunction,
-  DocNavLink,
-} from '../types';
+  DocMetadataBase,
+  VersionMetadata,
+  PropNavigationLink,
+} from '@docusaurus/plugin-content-docs';
 import type {LoadContext} from '@docusaurus/types';
-import {DEFAULT_PLUGIN_ID} from '@docusaurus/core/lib/constants';
-import {DEFAULT_OPTIONS} from '../options';
-import {Optional} from 'utility-types';
-import {createSlugger, posixPath} from '@docusaurus/utils';
-import {createSidebarsUtils} from '../sidebars/utils';
+import type {Optional} from 'utility-types';
 
 const fixtureDir = path.join(__dirname, '__fixtures__');
 
 const createFakeDocFile = ({
   source,
-  frontmatter = {},
+  frontMatter = {},
   markdown = 'some markdown content',
 }: {
   source: string;
-  frontmatter?: Record<string, string>;
+  frontMatter?: {[key: string]: string};
   markdown?: string;
 }): DocFile => {
   const content = `---
-${Object.entries(frontmatter)
+${Object.entries(frontMatter)
   .map(([key, value]) => `${key}: ${value}`)
   .join('\n')}
 ---
@@ -53,52 +61,74 @@ ${markdown}
   return {
     source,
     content,
-    lastUpdate: {},
     contentPath: 'docs',
     filePath: source,
   };
 };
 
-function createTestUtils({
-  siteDir,
-  context,
-  versionMetadata,
-  options,
-}: {
+type TestUtilsArg = {
   siteDir: string;
   context: LoadContext;
   versionMetadata: VersionMetadata;
   options: MetadataOptions;
-}) {
+  env?: DocEnv;
+};
+
+async function createTestUtils({
+  siteDir,
+  context,
+  versionMetadata,
+  options,
+  env = 'production',
+}: TestUtilsArg) {
+  const tagsFile = await getTagsFile({
+    contentPaths: versionMetadata,
+    tags: options.tags,
+  });
+
   async function readDoc(docFileSource: string) {
-    return readDocFile(versionMetadata, docFileSource, options);
+    return readDocFile(versionMetadata, docFileSource);
   }
-  function processDocFile(docFile: DocFile) {
+  async function processDocFile(docFileArg: DocFile | string) {
+    const docFile: DocFile =
+      typeof docFileArg === 'string' ? await readDoc(docFileArg) : docFileArg;
+
     return processDocMetadata({
       docFile,
       versionMetadata,
       options,
       context,
+      env,
+      tagsFile,
     });
   }
+
+  // Makes it easier to assert failure cases
+  async function getProcessDocFileError(
+    docFileArg: DocFile | string,
+  ): Promise<Error> {
+    try {
+      await processDocFile(docFileArg);
+      return new Error("unexpected: getProcessDocFileError didn't crash");
+    } catch (e) {
+      return e as Error;
+    }
+  }
+
   async function testMeta(
     docFileSource: string,
     expectedMetadata: Optional<
       DocMetadataBase,
-      'source' | 'lastUpdatedBy' | 'lastUpdatedAt' | 'editUrl'
+      'source' | 'lastUpdatedBy' | 'lastUpdatedAt' | 'editUrl' | 'draft'
     >,
   ) {
     const docFile = await readDoc(docFileSource);
-    const metadata = await processDocMetadata({
-      docFile,
-      versionMetadata,
-      context,
-      options,
-    });
+    const metadata = await processDocFile(docFile);
     expect(metadata).toEqual({
       lastUpdatedBy: undefined,
       lastUpdatedAt: undefined,
       editUrl: undefined,
+      draft: false,
       source: path.posix.join(
         '@site',
         posixPath(path.relative(siteDir, versionMetadata.contentPath)),
@@ -115,20 +145,29 @@ function createTestUtils({
       versionMetadata,
       context,
       options,
+      env,
+      tagsFile: null,
     });
     expect(metadata.permalink).toEqual(expectedPermalink);
   }
 
-  async function generateNavigation(
-    docFiles: DocFile[],
-  ): Promise<[DocNavLink | undefined, DocNavLink | undefined][]> {
+  async function generateNavigation(docFiles: DocFile[]): Promise<{
+    pagination: {
+      prev?: PropNavigationLink;
+      next?: PropNavigationLink;
+      id: string;
+    }[];
+    sidebars: Sidebars;
+  }> {
     const rawDocs = await Promise.all(
-      docFiles.map((docFile) =>
+      docFiles.map(async (docFile) =>
         processDocMetadata({
           docFile,
           versionMetadata,
           context,
           options,
+          env,
+          tagsFile: null,
         }),
       ),
     );
@@ -137,6 +176,7 @@ function createTestUtils({
         defaultSidebarItemsGenerator({...args}),
       numberPrefixParser: options.numberPrefixParser,
       docs: rawDocs,
+      drafts: [],
       version: versionMetadata,
       sidebarOptions: {
         sidebarCollapsed: false,
@@ -146,14 +186,22 @@ function createTestUtils({
     });
     const sidebarsUtils = createSidebarsUtils(sidebars);
 
-    return addDocNavigation(
-      rawDocs,
-      sidebarsUtils,
-      versionMetadata.sidebarFilePath as string,
-    ).map((doc) => [doc.previous, doc.next]);
+    return {
+      pagination: addDocNavigation({
+        docs: rawDocs,
+        sidebarsUtils,
+      }).map((doc) => ({prev: doc.previous, next: doc.next, id: doc.id})),
+      sidebars,
+    };
   }
 
-  return {processDocFile, testMeta, testSlug, generateNavigation};
+  return {
+    processDocFile,
+    getProcessDocFileError,
+    testMeta,
+    testSlug,
+    generateNavigation,
+  };
 }
 
 describe('simple site', () => {
@@ -161,36 +209,43 @@ describe('simple site', () => {
     loadSiteOptions: {options: Partial<PluginOptions>} = {options: {}},
   ) {
     const siteDir = path.join(fixtureDir, 'simple-site');
-    const context = await loadContext(siteDir);
+    const context = await loadContext({siteDir});
     const options = {
       id: DEFAULT_PLUGIN_ID,
       ...DEFAULT_OPTIONS,
       ...loadSiteOptions.options,
     };
-    const versionsMetadata = readVersionsMetadata({
+    const versionsMetadata = await readVersionsMetadata({
       context,
       options,
     });
-    expect(versionsMetadata.length).toEqual(1);
-    const [currentVersion] = versionsMetadata;
+    expect(versionsMetadata).toHaveLength(1);
+    const currentVersion = versionsMetadata[0]!;
 
-    const defaultTestUtils = createTestUtils({
-      siteDir,
-      context,
-      options,
-      versionMetadata: currentVersion,
-    });
+    async function createTestUtilsPartial(args: Partial<TestUtilsArg>) {
+      return createTestUtils({
+        siteDir,
+        context,
+        options,
+        versionMetadata: currentVersion,
+        ...args,
+      });
+    }
+
+    const defaultTestUtils = await createTestUtilsPartial({});
+
     return {
       siteDir,
       context,
       options,
       versionsMetadata,
       defaultTestUtils,
+      createTestUtilsPartial,
       currentVersion,
     };
   }
 
-  test('readVersionDocs', async () => {
+  it('readVersionDocs', async () => {
     const {options, currentVersion} = await loadSite();
     const docs = await readVersionDocs(currentVersion, options);
     expect(docs.map((doc) => doc.source).sort()).toEqual(
@@ -203,22 +258,29 @@ describe('simple site', () => {
         'rootResolvedSlug.md',
         'rootTryToEscapeSlug.md',
         'headingAsTitle.md',
+        'doc with space.md',
+        'doc-draft.md',
+        'doc-unlisted.md',
+        'customLastUpdate.md',
+        'lastUpdateAuthorOnly.md',
+        'lastUpdateDateOnly.md',
         'foo/bar.md',
         'foo/baz.md',
         'slugs/absoluteSlug.md',
         'slugs/relativeSlug.md',
         'slugs/resolvedSlug.md',
         'slugs/tryToEscapeSlug.md',
+        'unlisted-category/index.md',
+        'unlisted-category/unlisted-category-doc.md',
       ].sort(),
     );
   });
 
-  test('normal docs', async () => {
+  it('normal docs', async () => {
     const {defaultTestUtils} = await loadSite();
     await defaultTestUtils.testMeta(path.join('foo', 'bar.md'), {
       version: 'current',
       id: 'foo/bar',
-      unversionedId: 'foo/bar',
       sourceDirName: 'foo',
       permalink: '/docs/foo/bar',
       slug: '/foo/bar',
@@ -228,18 +290,21 @@ describe('simple site', () => {
         description: 'This is custom description',
         id: 'bar',
         title: 'Bar',
+        pagination_next: null,
+        pagination_prev: null,
       },
       tags: [],
+      unlisted: false,
     });
     await defaultTestUtils.testMeta(path.join('hello.md'), {
       version: 'current',
       id: 'hello',
-      unversionedId: 'hello',
       sourceDirName: '.',
       permalink: '/docs/',
       slug: '/',
       title: 'Hello, World !',
       description: `Hi, Endilie here :)`,
+      sidebarPosition: undefined,
       frontMatter: {
         id: 'hello',
         title: 'Hello, World !',
@@ -250,24 +315,30 @@ describe('simple site', () => {
       tags: [
         {
           label: 'tag-1',
+          inline: true,
           permalink: '/docs/tags/tag-1',
+          description: undefined,
         },
         {
           label: 'tag 3',
+          inline: true,
           permalink: '/docs/tags/tag-3',
+          description: undefined,
         },
       ],
+      unlisted: false,
     });
   });
 
-  test('docs with editUrl', async () => {
-    const {siteDir, context, options, currentVersion} = await loadSite({
-      options: {
-        editUrl: 'https://github.com/facebook/docusaurus/edit/main/website',
-      },
-    });
+  it('docs with editUrl', async () => {
+    const {siteDir, context, options, currentVersion, createTestUtilsPartial} =
+      await loadSite({
+        options: {
+          editUrl: 'https://github.com/facebook/docusaurus/edit/main/website',
+        },
+      });
 
-    const testUtilsLocal = createTestUtils({
+    const testUtilsLocal = await createTestUtilsPartial({
       siteDir,
       context,
       options,
@@ -277,11 +348,11 @@ describe('simple site', () => {
     await testUtilsLocal.testMeta(path.join('foo', 'baz.md'), {
       version: 'current',
       id: 'foo/baz',
-      unversionedId: 'foo/baz',
       sourceDirName: 'foo',
       permalink: '/docs/foo/bazSlug.html',
       slug: '/foo/bazSlug.html',
       title: 'baz',
+      sidebarPosition: undefined,
       editUrl:
         'https://github.com/facebook/docusaurus/edit/main/website/docs/foo/baz.md',
       description: 'Images',
@@ -292,30 +363,47 @@ describe('simple site', () => {
         pagination_label: 'baz pagination_label',
         tags: [
           'tag 1',
+          'globalTag1',
           'tag-1',
           {label: 'tag 2', permalink: 'tag2-custom-permalink'},
         ],
       },
       tags: [
         {
+          description: undefined,
+          inline: true,
           label: 'tag 1',
           permalink: '/docs/tags/tag-1',
         },
         {
+          description: 'Global Tag 1 description',
+          inline: false,
+          label: 'Global Tag 1 label',
+          permalink: '/docs/tags/global-tag-1-permalink',
+        },
+        {
+          description: undefined,
+          inline: true,
+          label: 'tag-1',
+          permalink: '/docs/tags/tag-1',
+        },
+        {
           label: 'tag 2',
+          description: undefined,
+          inline: true,
           permalink: '/docs/tags/tag2-custom-permalink',
         },
       ],
+      unlisted: false,
     });
   });
 
-  test('docs with custom editUrl & unrelated frontmatter', async () => {
+  it('docs with custom editUrl & unrelated frontMatter', async () => {
     const {defaultTestUtils} = await loadSite();
 
     await defaultTestUtils.testMeta('lorem.md', {
       version: 'current',
       id: 'lorem',
-      unversionedId: 'lorem',
       sourceDirName: '.',
       permalink: '/docs/lorem',
       slug: '/lorem',
@@ -324,24 +412,26 @@ describe('simple site', () => {
       description: 'Lorem ipsum.',
       frontMatter: {
         custom_edit_url: 'https://github.com/customUrl/docs/lorem.md',
-        unrelated_frontmatter: "won't be part of metadata",
+        unrelated_front_matter: "won't be part of metadata",
       },
       tags: [],
+      unlisted: false,
     });
   });
 
-  test('docs with function editUrl', async () => {
+  it('docs with function editUrl', async () => {
     const hardcodedEditUrl = 'hardcoded-edit-url';
 
     const editUrlFunction: EditUrlFunction = jest.fn(() => hardcodedEditUrl);
 
-    const {siteDir, context, options, currentVersion} = await loadSite({
-      options: {
-        editUrl: editUrlFunction,
-      },
-    });
+    const {siteDir, context, options, currentVersion, createTestUtilsPartial} =
+      await loadSite({
+        options: {
+          editUrl: editUrlFunction,
+        },
+      });
 
-    const testUtilsLocal = createTestUtils({
+    const testUtilsLocal = await createTestUtilsPartial({
       siteDir,
       context,
       options,
@@ -351,13 +441,13 @@ describe('simple site', () => {
     await testUtilsLocal.testMeta(path.join('foo', 'baz.md'), {
       version: 'current',
       id: 'foo/baz',
-      unversionedId: 'foo/baz',
       sourceDirName: 'foo',
       permalink: '/docs/foo/bazSlug.html',
       slug: '/foo/bazSlug.html',
       title: 'baz',
       editUrl: hardcodedEditUrl,
       description: 'Images',
+      sidebarPosition: undefined,
       frontMatter: {
         id: 'baz',
         slug: 'bazSlug.html',
@@ -365,20 +455,38 @@ describe('simple site', () => {
         pagination_label: 'baz pagination_label',
         tags: [
           'tag 1',
+          'globalTag1',
           'tag-1',
           {label: 'tag 2', permalink: 'tag2-custom-permalink'},
         ],
       },
       tags: [
         {
+          description: undefined,
+          inline: true,
           label: 'tag 1',
           permalink: '/docs/tags/tag-1',
         },
         {
+          description: 'Global Tag 1 description',
+          inline: false,
+          label: 'Global Tag 1 label',
+          permalink: '/docs/tags/global-tag-1-permalink',
+        },
+        {
+          description: undefined,
+          inline: true,
+          label: 'tag-1',
+          permalink: '/docs/tags/tag-1',
+        },
+        {
+          description: undefined,
+          inline: true,
           label: 'tag 2',
           permalink: '/docs/tags/tag2-custom-permalink',
         },
       ],
+      unlisted: false,
     });
 
     expect(editUrlFunction).toHaveBeenCalledTimes(1);
@@ -391,15 +499,16 @@ describe('simple site', () => {
     });
   });
 
-  test('docs with last update time and author', async () => {
-    const {siteDir, context, options, currentVersion} = await loadSite({
-      options: {
-        showLastUpdateAuthor: true,
-        showLastUpdateTime: true,
-      },
-    });
+  it('docs with last update time and author', async () => {
+    const {siteDir, context, options, currentVersion, createTestUtilsPartial} =
+      await loadSite({
+        options: {
+          showLastUpdateAuthor: true,
+          showLastUpdateTime: true,
+        },
+      });
 
-    const testUtilsLocal = createTestUtils({
+    const testUtilsLocal = await createTestUtilsPartial({
       siteDir,
       context,
       options,
@@ -409,7 +518,6 @@ describe('simple site', () => {
     await testUtilsLocal.testMeta('lorem.md', {
       version: 'current',
       id: 'lorem',
-      unversionedId: 'lorem',
       sourceDirName: '.',
       permalink: '/docs/lorem',
       slug: '/lorem',
@@ -418,16 +526,229 @@ describe('simple site', () => {
       description: 'Lorem ipsum.',
       frontMatter: {
         custom_edit_url: 'https://github.com/customUrl/docs/lorem.md',
-        unrelated_frontmatter: "won't be part of metadata",
+        unrelated_front_matter: "won't be part of metadata",
       },
-      lastUpdatedAt: 1539502055,
-      formattedLastUpdatedAt: '10/14/2018',
-      lastUpdatedBy: 'Author',
+      lastUpdatedAt: LAST_UPDATE_FALLBACK.lastUpdatedAt,
+      lastUpdatedBy: LAST_UPDATE_FALLBACK.lastUpdatedBy,
       tags: [],
+      unlisted: false,
     });
   });
 
-  test('docs with slugs', async () => {
+  it('docs with draft frontmatter', async () => {
+    const {createTestUtilsPartial} = await loadSite();
+
+    const testUtilsProd = await createTestUtilsPartial({
+      env: 'production',
+    });
+    await expect(
+      testUtilsProd.processDocFile('doc-draft.md'),
+    ).resolves.toMatchObject({
+      draft: true,
+    });
+
+    const testUtilsDev = await createTestUtilsPartial({
+      env: 'development',
+    });
+    await expect(
+      testUtilsDev.processDocFile('doc-draft.md'),
+    ).resolves.toMatchObject({
+      draft: false,
+    });
+  });
+
+  it('docs with unlisted frontmatter', async () => {
+    const {createTestUtilsPartial} = await loadSite();
+
+    const baseMeta = {
+      version: 'current',
+      id: 'doc-unlisted',
+      sourceDirName: '.',
+      permalink: '/docs/doc-unlisted',
+      slug: '/doc-unlisted',
+      title: 'doc-unlisted',
+      description: 'This is an unlisted document',
+      frontMatter: {
+        unlisted: true,
+      },
+      sidebarPosition: undefined,
+      tags: [],
+    };
+
+    const testUtilsProd = await createTestUtilsPartial({
+      env: 'production',
+    });
+
+    await testUtilsProd.testMeta('doc-unlisted.md', {
+      ...baseMeta,
+      unlisted: true,
+    });
+
+    const testUtilsDev = await createTestUtilsPartial({
+      env: 'development',
+    });
+
+    await testUtilsDev.testMeta('doc-unlisted.md', {
+      ...baseMeta,
+      unlisted: false,
+    });
+  });
+
+  it('docs with last_update front matter', async () => {
+    const {siteDir, context, options, currentVersion, createTestUtilsPartial} =
+      await loadSite({
+        options: {
+          showLastUpdateAuthor: true,
+          showLastUpdateTime: true,
+        },
+      });
+
+    const testUtilsLocal = await createTestUtilsPartial({
+      siteDir,
+      context,
+      options,
+      versionMetadata: currentVersion,
+    });
+
+    await testUtilsLocal.testMeta('customLastUpdate.md', {
+      version: 'current',
+      id: 'customLastUpdate',
+      sourceDirName: '.',
+      permalink: '/docs/customLastUpdate',
+      slug: '/customLastUpdate',
+      title: 'Custom Last Update',
+      description: 'Custom last update',
+      frontMatter: {
+        last_update: {
+          author: 'Custom Author (processed by parseFrontMatter)',
+          date: '1/1/2000',
+        },
+        title: 'Custom Last Update',
+      },
+      lastUpdatedAt: new Date('1/1/2000').getTime(),
+      lastUpdatedBy: 'Custom Author (processed by parseFrontMatter)',
+      sidebarPosition: undefined,
+      tags: [],
+      unlisted: false,
+    });
+  });
+
+  it('docs with only last_update author front matter', async () => {
+    const {siteDir, context, options, currentVersion, createTestUtilsPartial} =
+      await loadSite({
+        options: {
+          showLastUpdateAuthor: true,
+          showLastUpdateTime: true,
+        },
+      });
+
+    const testUtilsLocal = await createTestUtilsPartial({
+      siteDir,
+      context,
+      options,
+      versionMetadata: currentVersion,
+    });
+
+    await testUtilsLocal.testMeta('lastUpdateAuthorOnly.md', {
+      version: 'current',
+      id: 'lastUpdateAuthorOnly',
+      sourceDirName: '.',
+      permalink: '/docs/lastUpdateAuthorOnly',
+      slug: '/lastUpdateAuthorOnly',
+      title: 'Last Update Author Only',
+      description: 'Only custom author, so it will still use the date from Git',
+      frontMatter: {
+        last_update: {
+          author: 'Custom Author (processed by parseFrontMatter)',
+        },
+        title: 'Last Update Author Only',
+      },
+      lastUpdatedAt: LAST_UPDATE_FALLBACK.lastUpdatedAt,
+      lastUpdatedBy: 'Custom Author (processed by parseFrontMatter)',
+      sidebarPosition: undefined,
+      tags: [],
+      unlisted: false,
+    });
+  });
+
+  it('docs with only last_update date front matter', async () => {
+    const {siteDir, context, options, currentVersion, createTestUtilsPartial} =
+      await loadSite({
+        options: {
+          showLastUpdateAuthor: true,
+          showLastUpdateTime: true,
+        },
+      });
+
+    const testUtilsLocal = await createTestUtilsPartial({
+      siteDir,
+      context,
+      options,
+      versionMetadata: currentVersion,
+    });
+
+    await testUtilsLocal.testMeta('lastUpdateDateOnly.md', {
+      version: 'current',
+      id: 'lastUpdateDateOnly',
+      sourceDirName: '.',
+      permalink: '/docs/lastUpdateDateOnly',
+      slug: '/lastUpdateDateOnly',
+      title: 'Last Update Date Only',
+      description: 'Only custom date, so it will still use the author from Git',
+      frontMatter: {
+        last_update: {
+          date: '1/1/2000',
+        },
+        title: 'Last Update Date Only',
+      },
+      lastUpdatedAt: new Date('1/1/2000').getTime(),
+      lastUpdatedBy: 'Author',
+      sidebarPosition: undefined,
+      tags: [],
+      unlisted: false,
+    });
+  });
+
+  it('docs with last_update front matter disabled', async () => {
+    const {siteDir, context, options, currentVersion, createTestUtilsPartial} =
+      await loadSite({
+        options: {
+          showLastUpdateAuthor: false,
+          showLastUpdateTime: false,
+        },
+      });
+
+    const testUtilsLocal = await createTestUtilsPartial({
+      siteDir,
+      context,
+      options,
+      versionMetadata: currentVersion,
+    });
+
+    await testUtilsLocal.testMeta('customLastUpdate.md', {
+      version: 'current',
+      id: 'customLastUpdate',
+      sourceDirName: '.',
+      permalink: '/docs/customLastUpdate',
+      slug: '/customLastUpdate',
+      title: 'Custom Last Update',
+      description: 'Custom last update',
+      frontMatter: {
+        last_update: {
+          author: 'Custom Author (processed by parseFrontMatter)',
+          date: '1/1/2000',
+        },
+        title: 'Custom Last Update',
+      },
+      lastUpdatedAt: undefined,
+      lastUpdatedBy: undefined,
+      sidebarPosition: undefined,
+      tags: [],
+      unlisted: false,
+    });
+  });
+
+  it('docs with slugs', async () => {
     const {defaultTestUtils} = await loadSite();
 
     await defaultTestUtils.testSlug(
@@ -465,41 +786,56 @@ describe('simple site', () => {
     );
   });
 
-  test('docs with invalid id', async () => {
+  it('docs with invalid id', async () => {
     const {defaultTestUtils} = await loadSite();
-    expect(() => {
-      defaultTestUtils.processDocFile(
-        createFakeDocFile({
-          source: 'some/fake/path',
-          frontmatter: {
-            id: 'Hello/world',
-          },
-        }),
-      );
-    }).toThrowErrorMatchingInlineSnapshot(
-      `"Document id \\"Hello/world\\" cannot include slash."`,
-    );
-  });
 
-  test('custom pagination', async () => {
-    const {defaultTestUtils, options, versionsMetadata} = await loadSite();
-    const docs = await readVersionDocs(versionsMetadata[0], options);
-    expect(await defaultTestUtils.generateNavigation(docs)).toMatchSnapshot();
-  });
-
-  test('bad pagination', async () => {
-    const {defaultTestUtils, options, versionsMetadata} = await loadSite();
-    const docs = await readVersionDocs(versionsMetadata[0], options);
-    docs.push(
+    const error = await defaultTestUtils.getProcessDocFileError(
       createFakeDocFile({
-        source: 'hehe',
-        frontmatter: {pagination_prev: 'nonexistent'},
+        source: 'some/fake/path',
+        frontMatter: {
+          id: 'Hello/world',
+        },
       }),
     );
-    await expect(async () => {
-      await defaultTestUtils.generateNavigation(docs);
-    }).rejects.toThrowErrorMatchingInlineSnapshot(
-      `"Error when loading hehe in .: the pagination_prev front matter points to a non-existent ID nonexistent."`,
+
+    expect(error.message).toMatchInlineSnapshot(
+      `"Can't process doc metadata for doc at path path=some/fake/path in version name=current"`,
+    );
+    expect(error.cause).toBeDefined();
+    expect(error.cause!.message).toMatchInlineSnapshot(
+      `"Document id "Hello/world" cannot include slash."`,
+    );
+  });
+
+  it('custom pagination - production', async () => {
+    const {createTestUtilsPartial, options, versionsMetadata} =
+      await loadSite();
+    const testUtils = await createTestUtilsPartial({env: 'production'});
+    const docs = await readVersionDocs(versionsMetadata[0]!, options);
+    await expect(testUtils.generateNavigation(docs)).resolves.toMatchSnapshot();
+  });
+
+  it('custom pagination - development', async () => {
+    const {createTestUtilsPartial, options, versionsMetadata} =
+      await loadSite();
+    const testUtils = await createTestUtilsPartial({env: 'development'});
+    const docs = await readVersionDocs(versionsMetadata[0]!, options);
+    await expect(testUtils.generateNavigation(docs)).resolves.toMatchSnapshot();
+  });
+
+  it('bad pagination', async () => {
+    const {defaultTestUtils, options, versionsMetadata} = await loadSite();
+    const docs = await readVersionDocs(versionsMetadata[0]!, options);
+    docs.push(
+      createFakeDocFile({
+        source: 'bad',
+        frontMatter: {pagination_prev: 'nonexistent'},
+      }),
+    );
+    await expect(
+      defaultTestUtils.generateNavigation(docs),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `"Error when loading bad in .: the pagination_prev front matter points to a non-existent ID nonexistent."`,
     );
   });
 });
@@ -511,7 +847,8 @@ describe('versioned site', () => {
     },
   ) {
     const siteDir = path.join(fixtureDir, 'versioned-site');
-    const context = await loadContext(siteDir, {
+    const context = await loadContext({
+      siteDir,
       locale: loadSiteOptions.locale,
     });
     const options = {
@@ -519,35 +856,38 @@ describe('versioned site', () => {
       ...DEFAULT_OPTIONS,
       ...loadSiteOptions.options,
     };
-    const versionsMetadata = readVersionsMetadata({
+    const versionsMetadata = await readVersionsMetadata({
       context,
       options,
     });
-    expect(versionsMetadata.length).toEqual(4);
-    const [currentVersion, version101, version100, versionWithSlugs] =
-      versionsMetadata;
+    expect(versionsMetadata).toHaveLength(4);
 
-    const currentVersionTestUtils = createTestUtils({
+    const currentVersion = versionsMetadata[0]!;
+    const version101 = versionsMetadata[1]!;
+    const version100 = versionsMetadata[2]!;
+    const versionWithSlugs = versionsMetadata[3]!;
+
+    const currentVersionTestUtils = await createTestUtils({
       siteDir,
       context,
       options,
       versionMetadata: currentVersion,
     });
-    const version101TestUtils = createTestUtils({
+    const version101TestUtils = await createTestUtils({
       siteDir,
       context,
       options,
       versionMetadata: version101,
     });
 
-    const version100TestUtils = createTestUtils({
+    const version100TestUtils = await createTestUtils({
       siteDir,
       context,
       options,
       versionMetadata: version100,
     });
 
-    const versionWithSlugsTestUtils = createTestUtils({
+    const versionWithSlugsTestUtils = await createTestUtils({
       siteDir,
       context,
       options,
@@ -567,18 +907,18 @@ describe('versioned site', () => {
     };
   }
 
-  test('next docs', async () => {
+  it('next docs', async () => {
     const {currentVersionTestUtils} = await loadSite();
 
     await currentVersionTestUtils.testMeta(path.join('foo', 'bar.md'), {
       id: 'foo/bar',
       version: 'current',
-      unversionedId: 'foo/bar',
       sourceDirName: 'foo',
       permalink: '/docs/next/foo/barSlug',
       slug: '/foo/barSlug',
       title: 'bar',
       description: 'This is next version of bar.',
+      sidebarPosition: undefined,
       frontMatter: {
         slug: 'barSlug',
         tags: [
@@ -593,22 +933,28 @@ describe('versioned site', () => {
       tags: [
         {
           label: 'barTag 1',
+          inline: true,
           permalink: '/docs/next/tags/bar-tag-1',
+          description: undefined,
         },
         {
           label: 'barTag-2',
+          inline: true,
           permalink: '/docs/next/tags/bar-tag-2',
+          description: undefined,
         },
         {
           label: 'barTag 3',
+          inline: true,
           permalink: '/docs/next/tags/barTag-3-permalink',
+          description: undefined,
         },
       ],
+      unlisted: false,
     });
     await currentVersionTestUtils.testMeta(path.join('hello.md'), {
       id: 'hello',
       version: 'current',
-      unversionedId: 'hello',
       sourceDirName: '.',
       permalink: '/docs/next/',
       slug: '/',
@@ -618,15 +964,15 @@ describe('versioned site', () => {
         slug: '/',
       },
       tags: [],
+      unlisted: false,
     });
   });
 
-  test('versioned docs', async () => {
+  it('versioned docs', async () => {
     const {version101TestUtils, version100TestUtils} = await loadSite();
 
     await version100TestUtils.testMeta(path.join('foo', 'bar.md'), {
-      id: 'version-1.0.0/foo/bar',
-      unversionedId: 'foo/bar',
+      id: 'foo/bar',
       sourceDirName: 'foo',
       permalink: '/docs/1.0.0/foo/barSlug',
       slug: '/foo/barSlug',
@@ -635,10 +981,10 @@ describe('versioned site', () => {
       frontMatter: {slug: 'barSlug'},
       version: '1.0.0',
       tags: [],
+      unlisted: false,
     });
     await version100TestUtils.testMeta(path.join('hello.md'), {
-      id: 'version-1.0.0/hello',
-      unversionedId: 'hello',
+      id: 'hello',
       sourceDirName: '.',
       permalink: '/docs/1.0.0/',
       slug: '/',
@@ -646,15 +992,29 @@ describe('versioned site', () => {
       description: 'Hello 1.0.0 ! (translated en)',
       frontMatter: {
         slug: '/',
+        tags: ['inlineTag-v1.0.0', 'globalTag-v1.0.0'],
       },
       version: '1.0.0',
       source:
         '@site/i18n/en/docusaurus-plugin-content-docs/version-1.0.0/hello.md',
-      tags: [],
+      tags: [
+        {
+          description: undefined,
+          inline: true,
+          label: 'inlineTag-v1.0.0',
+          permalink: '/docs/1.0.0/tags/inline-tag-v-1-0-0',
+        },
+        {
+          description: 'globalTag-v1.0.0 description (en)',
+          inline: false,
+          label: 'globalTag-v1.0.0 label (en)',
+          permalink: '/docs/1.0.0/tags/globalTag-v1.0.0 permalink (en)',
+        },
+      ],
+      unlisted: false,
     });
     await version101TestUtils.testMeta(path.join('foo', 'bar.md'), {
-      id: 'version-1.0.1/foo/bar',
-      unversionedId: 'foo/bar',
+      id: 'foo/bar',
       sourceDirName: 'foo',
       permalink: '/docs/foo/bar',
       slug: '/foo/bar',
@@ -663,10 +1023,10 @@ describe('versioned site', () => {
       version: '1.0.1',
       frontMatter: {},
       tags: [],
+      unlisted: false,
     });
     await version101TestUtils.testMeta(path.join('hello.md'), {
-      id: 'version-1.0.1/hello',
-      unversionedId: 'hello',
+      id: 'hello',
       sourceDirName: '.',
       permalink: '/docs/',
       slug: '/',
@@ -675,12 +1035,27 @@ describe('versioned site', () => {
       version: '1.0.1',
       frontMatter: {
         slug: '/',
+        tags: ['inlineTag-v1.0.1', 'globalTag-v1.0.1'],
       },
-      tags: [],
+      tags: [
+        {
+          description: undefined,
+          inline: true,
+          label: 'inlineTag-v1.0.1',
+          permalink: '/docs/tags/inline-tag-v-1-0-1',
+        },
+        {
+          description: 'globalTag-v1.0.1 description',
+          inline: false,
+          label: 'globalTag-v1.0.1 label',
+          permalink: '/docs/tags/globalTag-v1.0.1 permalink',
+        },
+      ],
+      unlisted: false,
     });
   });
 
-  test('next doc slugs', async () => {
+  it('next doc slugs', async () => {
     const {currentVersionTestUtils} = await loadSite();
 
     await currentVersionTestUtils.testSlug(
@@ -701,7 +1076,7 @@ describe('versioned site', () => {
     );
   });
 
-  test('versioned doc slugs', async () => {
+  it('versioned doc slugs', async () => {
     const {versionWithSlugsTestUtils} = await loadSite();
 
     await versionWithSlugsTestUtils.testSlug(
@@ -739,7 +1114,7 @@ describe('versioned site', () => {
     );
   });
 
-  test('doc with editUrl function', async () => {
+  it('doc with editUrl function', async () => {
     const hardcodedEditUrl = 'hardcoded-edit-url';
 
     const editUrlFunction: EditUrlFunction = jest.fn(() => hardcodedEditUrl);
@@ -750,7 +1125,7 @@ describe('versioned site', () => {
       },
     });
 
-    const testUtilsLocal = createTestUtils({
+    const testUtilsLocal = await createTestUtils({
       siteDir,
       context,
       options,
@@ -758,8 +1133,7 @@ describe('versioned site', () => {
     });
 
     await testUtilsLocal.testMeta(path.join('hello.md'), {
-      id: 'version-1.0.0/hello',
-      unversionedId: 'hello',
+      id: 'hello',
       sourceDirName: '.',
       permalink: '/docs/1.0.0/',
       slug: '/',
@@ -767,12 +1141,27 @@ describe('versioned site', () => {
       description: 'Hello 1.0.0 ! (translated en)',
       frontMatter: {
         slug: '/',
+        tags: ['inlineTag-v1.0.0', 'globalTag-v1.0.0'],
       },
       version: '1.0.0',
       source:
         '@site/i18n/en/docusaurus-plugin-content-docs/version-1.0.0/hello.md',
       editUrl: hardcodedEditUrl,
-      tags: [],
+      tags: [
+        {
+          description: undefined,
+          inline: true,
+          label: 'inlineTag-v1.0.0',
+          permalink: '/docs/1.0.0/tags/inline-tag-v-1-0-0',
+        },
+        {
+          description: 'globalTag-v1.0.0 description (en)',
+          inline: false,
+          label: 'globalTag-v1.0.0 label (en)',
+          permalink: '/docs/1.0.0/tags/globalTag-v1.0.0 permalink (en)',
+        },
+      ],
+      unlisted: false,
     });
 
     expect(editUrlFunction).toHaveBeenCalledTimes(1);
@@ -785,15 +1174,14 @@ describe('versioned site', () => {
     });
   });
 
-  test('translated doc with editUrl', async () => {
+  it('translated doc with editUrl', async () => {
     const {siteDir, context, options, version100} = await loadSite({
       options: {
         editUrl: 'https://github.com/facebook/docusaurus/edit/main/website',
-        // editCurrentVersion: true,
       },
     });
 
-    const testUtilsLocal = createTestUtils({
+    const testUtilsLocal = await createTestUtils({
       siteDir,
       context,
       options,
@@ -801,8 +1189,7 @@ describe('versioned site', () => {
     });
 
     await testUtilsLocal.testMeta(path.join('hello.md'), {
-      id: 'version-1.0.0/hello',
-      unversionedId: 'hello',
+      id: 'hello',
       sourceDirName: '.',
       permalink: '/docs/1.0.0/',
       slug: '/',
@@ -810,17 +1197,32 @@ describe('versioned site', () => {
       description: 'Hello 1.0.0 ! (translated en)',
       frontMatter: {
         slug: '/',
+        tags: ['inlineTag-v1.0.0', 'globalTag-v1.0.0'],
       },
       version: '1.0.0',
       source:
         '@site/i18n/en/docusaurus-plugin-content-docs/version-1.0.0/hello.md',
       editUrl:
         'https://github.com/facebook/docusaurus/edit/main/website/versioned_docs/version-1.0.0/hello.md',
-      tags: [],
+      tags: [
+        {
+          description: undefined,
+          inline: true,
+          label: 'inlineTag-v1.0.0',
+          permalink: '/docs/1.0.0/tags/inline-tag-v-1-0-0',
+        },
+        {
+          description: 'globalTag-v1.0.0 description (en)',
+          inline: false,
+          label: 'globalTag-v1.0.0 label (en)',
+          permalink: '/docs/1.0.0/tags/globalTag-v1.0.0 permalink (en)',
+        },
+      ],
+      unlisted: false,
     });
   });
 
-  test('translated en doc with editUrl and editCurrentVersion=true', async () => {
+  it('translated en doc with editUrl and editCurrentVersion=true', async () => {
     const {siteDir, context, options, version100} = await loadSite({
       options: {
         editUrl: 'https://github.com/facebook/docusaurus/edit/main/website',
@@ -828,7 +1230,7 @@ describe('versioned site', () => {
       },
     });
 
-    const testUtilsLocal = createTestUtils({
+    const testUtilsLocal = await createTestUtils({
       siteDir,
       context,
       options,
@@ -836,8 +1238,7 @@ describe('versioned site', () => {
     });
 
     await testUtilsLocal.testMeta(path.join('hello.md'), {
-      id: 'version-1.0.0/hello',
-      unversionedId: 'hello',
+      id: 'hello',
       sourceDirName: '.',
       permalink: '/docs/1.0.0/',
       slug: '/',
@@ -845,17 +1246,32 @@ describe('versioned site', () => {
       description: 'Hello 1.0.0 ! (translated en)',
       frontMatter: {
         slug: '/',
+        tags: ['inlineTag-v1.0.0', 'globalTag-v1.0.0'],
       },
       version: '1.0.0',
       source:
         '@site/i18n/en/docusaurus-plugin-content-docs/version-1.0.0/hello.md',
       editUrl:
         'https://github.com/facebook/docusaurus/edit/main/website/docs/hello.md',
-      tags: [],
+      tags: [
+        {
+          description: undefined,
+          inline: true,
+          label: 'inlineTag-v1.0.0',
+          permalink: '/docs/1.0.0/tags/inline-tag-v-1-0-0',
+        },
+        {
+          description: 'globalTag-v1.0.0 description (en)',
+          inline: false,
+          label: 'globalTag-v1.0.0 label (en)',
+          permalink: '/docs/1.0.0/tags/globalTag-v1.0.0 permalink (en)',
+        },
+      ],
+      unlisted: false,
     });
   });
 
-  test('translated fr doc with editUrl and editLocalizedFiles=true', async () => {
+  it('translated fr doc with editUrl and editLocalizedFiles=true', async () => {
     const {siteDir, context, options, version100} = await loadSite({
       options: {
         editUrl: 'https://github.com/facebook/docusaurus/edit/main/website',
@@ -864,7 +1280,7 @@ describe('versioned site', () => {
       locale: 'fr',
     });
 
-    const testUtilsLocal = createTestUtils({
+    const testUtilsLocal = await createTestUtils({
       siteDir,
       context,
       options,
@@ -872,8 +1288,7 @@ describe('versioned site', () => {
     });
 
     await testUtilsLocal.testMeta(path.join('hello.md'), {
-      id: 'version-1.0.0/hello',
-      unversionedId: 'hello',
+      id: 'hello',
       sourceDirName: '.',
       permalink: '/fr/docs/1.0.0/',
       slug: '/',
@@ -881,17 +1296,32 @@ describe('versioned site', () => {
       description: 'Hello 1.0.0 ! (translated fr)',
       frontMatter: {
         slug: '/',
+        tags: ['inlineTag-v1.0.0', 'globalTag-v1.0.0'],
       },
       version: '1.0.0',
       source:
         '@site/i18n/fr/docusaurus-plugin-content-docs/version-1.0.0/hello.md',
       editUrl:
         'https://github.com/facebook/docusaurus/edit/main/website/i18n/fr/docusaurus-plugin-content-docs/version-1.0.0/hello.md',
-      tags: [],
+      tags: [
+        {
+          description: undefined,
+          inline: true,
+          label: 'inlineTag-v1.0.0',
+          permalink: '/fr/docs/1.0.0/tags/inline-tag-v-1-0-0',
+        },
+        {
+          description: 'globalTag-v1.0.0 description (fr)',
+          inline: false,
+          label: 'globalTag-v1.0.0 label (fr)',
+          permalink: '/fr/docs/1.0.0/tags/globalTag-v1.0.0 permalink (fr)',
+        },
+      ],
+      unlisted: false,
     });
   });
 
-  test('translated fr doc with editUrl and editLocalizedFiles=true + editCurrentVersion=true', async () => {
+  it('translated fr doc with editUrl and editLocalizedFiles=true + editCurrentVersion=true', async () => {
     const {siteDir, context, options, version100} = await loadSite({
       options: {
         editUrl: 'https://github.com/facebook/docusaurus/edit/main/website',
@@ -901,7 +1331,7 @@ describe('versioned site', () => {
       locale: 'fr',
     });
 
-    const testUtilsLocal = createTestUtils({
+    const testUtilsLocal = await createTestUtils({
       siteDir,
       context,
       options,
@@ -909,8 +1339,7 @@ describe('versioned site', () => {
     });
 
     await testUtilsLocal.testMeta(path.join('hello.md'), {
-      id: 'version-1.0.0/hello',
-      unversionedId: 'hello',
+      id: 'hello',
       sourceDirName: '.',
       permalink: '/fr/docs/1.0.0/',
       slug: '/',
@@ -918,123 +1347,154 @@ describe('versioned site', () => {
       description: 'Hello 1.0.0 ! (translated fr)',
       frontMatter: {
         slug: '/',
+        tags: ['inlineTag-v1.0.0', 'globalTag-v1.0.0'],
       },
       version: '1.0.0',
       source:
         '@site/i18n/fr/docusaurus-plugin-content-docs/version-1.0.0/hello.md',
       editUrl:
         'https://github.com/facebook/docusaurus/edit/main/website/i18n/fr/docusaurus-plugin-content-docs/current/hello.md',
-      tags: [],
+      tags: [
+        {
+          description: undefined,
+          inline: true,
+          label: 'inlineTag-v1.0.0',
+          permalink: '/fr/docs/1.0.0/tags/inline-tag-v-1-0-0',
+        },
+        {
+          description: 'globalTag-v1.0.0 description (fr)',
+          inline: false,
+          label: 'globalTag-v1.0.0 label (fr)',
+          permalink: '/fr/docs/1.0.0/tags/globalTag-v1.0.0 permalink (fr)',
+        },
+      ],
+      unlisted: false,
     });
   });
 });
 
 describe('isConventionalDocIndex', () => {
-  test('supports readme', () => {
+  it('supports readme', () => {
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'doesNotMatter',
-        source: 'readme.md',
+      isCategoryIndex({
+        fileName: 'readme',
+        directories: ['doesNotMatter'],
+        extension: '.md',
       }),
-    ).toEqual(true);
+    ).toBe(true);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'doesNotMatter',
-        source: 'readme.mdx',
+      isCategoryIndex({
+        fileName: 'readme',
+        directories: ['doesNotMatter'],
+        extension: '.mdx',
       }),
-    ).toEqual(true);
+    ).toBe(true);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'doesNotMatter',
-        source: 'README.md',
+      isCategoryIndex({
+        fileName: 'README',
+        directories: ['doesNotMatter'],
+        extension: '.md',
       }),
-    ).toEqual(true);
+    ).toBe(true);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'doesNotMatter',
-        source: 'parent/ReAdMe',
+      isCategoryIndex({
+        fileName: 'ReAdMe',
+        directories: ['doesNotMatter'],
+        extension: '',
       }),
-    ).toEqual(true);
+    ).toBe(true);
   });
 
-  test('supports index', () => {
+  it('supports index', () => {
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'doesNotMatter',
-        source: 'index.md',
+      isCategoryIndex({
+        fileName: 'index',
+        directories: ['doesNotMatter'],
+        extension: '.md',
       }),
-    ).toEqual(true);
+    ).toBe(true);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'doesNotMatter',
-        source: 'index.mdx',
+      isCategoryIndex({
+        fileName: 'index',
+        directories: ['doesNotMatter'],
+        extension: '.mdx',
       }),
-    ).toEqual(true);
+    ).toBe(true);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'doesNotMatter',
-        source: 'INDEX.md',
+      isCategoryIndex({
+        fileName: 'INDEX',
+        directories: ['doesNotMatter'],
+        extension: '.md',
       }),
-    ).toEqual(true);
+    ).toBe(true);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'doesNotMatter',
-        source: 'parent/InDeX',
+      isCategoryIndex({
+        fileName: 'InDeX',
+        directories: ['doesNotMatter'],
+        extension: '',
       }),
-    ).toEqual(true);
+    ).toBe(true);
   });
 
-  test('supports <categoryName>/<categoryName>.md', () => {
+  it('supports <categoryName>/<categoryName>.md', () => {
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'someCategory',
-        source: 'someCategory',
+      isCategoryIndex({
+        fileName: 'someCategory',
+        directories: ['someCategory', 'doesNotMatter'],
+        extension: '',
       }),
-    ).toEqual(true);
+    ).toBe(true);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'someCategory',
-        source: 'someCategory.md',
+      isCategoryIndex({
+        fileName: 'someCategory',
+        directories: ['someCategory'],
+        extension: '.md',
       }),
-    ).toEqual(true);
+    ).toBe(true);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'someCategory',
-        source: 'someCategory.mdx',
+      isCategoryIndex({
+        fileName: 'someCategory',
+        directories: ['someCategory'],
+        extension: '.mdx',
       }),
-    ).toEqual(true);
+    ).toBe(true);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'some_category',
-        source: 'SOME_CATEGORY.md',
+      isCategoryIndex({
+        fileName: 'SOME_CATEGORY',
+        directories: ['some_category'],
+        extension: '.md',
       }),
-    ).toEqual(true);
+    ).toBe(true);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'some_category',
-        source: 'parent/some_category',
+      isCategoryIndex({
+        fileName: 'some_category',
+        directories: ['some_category'],
+        extension: '',
       }),
-    ).toEqual(true);
+    ).toBe(true);
   });
 
-  test('reject other cases', () => {
+  it('reject other cases', () => {
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'someCategory',
-        source: 'some_Category',
+      isCategoryIndex({
+        fileName: 'some_Category',
+        directories: ['someCategory'],
+        extension: '',
       }),
-    ).toEqual(false);
+    ).toBe(false);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'doesNotMatter',
-        source: 'read_me',
+      isCategoryIndex({
+        fileName: 'read_me',
+        directories: ['doesNotMatter'],
+        extension: '',
       }),
-    ).toEqual(false);
+    ).toBe(false);
     expect(
-      isConventionalDocIndex({
-        sourceDirName: 'doesNotMatter',
-        source: 'the index',
+      isCategoryIndex({
+        fileName: 'the index',
+        directories: ['doesNotMatter'],
+        extension: '',
       }),
-    ).toEqual(false);
+    ).toBe(false);
   });
 });

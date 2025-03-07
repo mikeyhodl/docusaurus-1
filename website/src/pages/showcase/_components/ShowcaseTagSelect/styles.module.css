@@ -5,6 +5,11 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+.checkboxLabel:hover {
+  opacity: 1;
+  box-shadow: 0 0 2px 1px var(--ifm-color-secondary-darkest);
+}
+
 input[type='checkbox'] + .checkboxLabel {
   display: flex;
   align-items: center;
@@ -17,22 +22,21 @@ input[type='checkbox'] + .checkboxLabel {
   border: 2px solid var(--ifm-color-secondary-darkest);
 }
 
-.checkboxLabel:hover {
-  opacity: 1;
-  box-shadow: 0px 0px 2px 1px var(--ifm-color-secondary-darkest);
-}
-
 input:focus-visible + .checkboxLabel {
   outline: 2px solid currentColor;
 }
 
 input:checked + .checkboxLabel {
   opacity: 0.9;
-  background-color: var(--site-color-checkbox-checked-bg);
+  background-color: hsl(167deg 56% 73% / 25%);
   border: 2px solid var(--ifm-color-primary-darkest);
 }
 
 input:checked + .checkboxLabel:hover {
   opacity: 0.75;
-  box-shadow: 0px 0px 2px 1px var(--ifm-color-primary-dark);
+  box-shadow: 0 0 2px 1px var(--ifm-color-primary-dark);
+}
+
+html[data-theme='dark'] input:checked + .checkboxLabel {
+  background-color: hsl(167deg 56% 73% / 10%);
 }

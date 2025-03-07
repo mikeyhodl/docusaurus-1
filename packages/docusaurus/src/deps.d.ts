@@ -5,18 +5,45 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-declare module 'remark-admonitions';
+declare module 'react-loadable-ssr-addon-v5-slorber' {
+  import type {WebpackPluginInstance, Compiler} from 'webpack';
 
-declare module 'react-loadable-ssr-addon-v5-slorber';
+  type Asset = {
+    file: string;
+    hash: string;
+    publicPath: string;
+    integrity: string;
+  };
 
-declare module 'resolve-pathname' {
-  export default function resolvePathname(to: string, from?: string): string;
+  export type Manifest = {
+    entrypoints: string[];
+    origins: {[key: string]: number[]};
+    assets: {[key: string]: Asset[]}[];
+  };
+
+  export function getBundles(
+    manifest: Manifest,
+    modulesToBeLoaded: string[],
+  ): {js?: Asset[]; css?: Asset[]};
+
+  export default class ReactLoadableSSRAddon implements WebpackPluginInstance {
+    constructor(props: {filename: string});
+    apply(compiler: Compiler): void;
+  }
 }
 
-declare module '@slorber/static-site-generator-webpack-plugin';
-
 declare module 'webpack/lib/HotModuleReplacementPlugin' {
-  import {HotModuleReplacementPlugin} from 'webpack';
+  import type {HotModuleReplacementPlugin} from 'webpack';
 
   export default HotModuleReplacementPlugin;
+}
+
+// TODO incompatible declaration file
+declare module 'eta' {
+  export const defaultConfig: object;
+
+  export function compile(
+    template: string,
+    options?: object,
+  ): (data: object, config: object) => string;
 }

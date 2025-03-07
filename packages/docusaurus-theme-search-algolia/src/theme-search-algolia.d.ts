@@ -6,42 +6,65 @@
  */
 
 declare module '@docusaurus/theme-search-algolia' {
-  export type Options = never;
+  import type {DeepPartial} from 'utility-types';
+  import type {DocSearchProps} from '@docsearch/react';
+
+  // DocSearch props that Docusaurus exposes directly through props forwarding
+  type DocusaurusDocSearchProps = Pick<
+    DocSearchProps,
+    | 'appId'
+    | 'apiKey'
+    | 'indexName'
+    | 'placeholder'
+    | 'translations'
+    | 'searchParameters'
+    | 'insights'
+    | 'initialQuery'
+  >;
+
+  type ThemeConfigAlgolia = DocusaurusDocSearchProps & {
+    // Docusaurus custom options, not coming from DocSearch
+    contextualSearch: boolean;
+    externalUrlRegex?: string;
+    searchPagePath: string | false | null;
+    replaceSearchResultPathname?: {
+      from: string;
+      to: string;
+    };
+  };
+
+  export type ThemeConfig = DocusaurusDocSearchProps & {
+    algolia: ThemeConfigAlgolia;
+  };
+
+  export type UserThemeConfig = DeepPartial<ThemeConfig>;
 }
 
-declare module '@theme/hooks/useSearchQuery' {
-  export interface SearchQuery {
-    searchQuery: string;
-    setSearchQuery: (newSearchQuery: string) => void;
-    generateSearchPageLink: (targetSearchQuery: string) => string;
-  }
+declare module '@docusaurus/theme-search-algolia/client' {
+  import type {ThemeConfig} from '@docusaurus/theme-search-algolia';
 
-  export default function useSearchQuery(): SearchQuery;
-}
+  export function useAlgoliaThemeConfig(): ThemeConfig;
 
-declare module '@theme/hooks/useAlgoliaContextualFacetFilters' {
-  export type useAlgoliaContextualFacetFiltersReturns = [string, string[]];
+  export function useAlgoliaContextualFacetFilters(): [string, string[]];
 
-  export default function useAlgoliaContextualFacetFilters(): useAlgoliaContextualFacetFiltersReturns;
+  export function useSearchResultUrlProcessor(): (url: string) => string;
 }
 
 declare module '@theme/SearchPage' {
-  const SearchPage: () => JSX.Element;
-  export default SearchPage;
-}
+  import type {ReactNode} from 'react';
 
-declare module '@theme/SearchMetadata' {
-  export type SearchMetadataProps = {
-    readonly locale?: string;
-    readonly version?: string;
-    readonly tag?: string;
-  };
-
-  const SearchMetadata: (props: SearchMetadataProps) => JSX.Element;
-  export default SearchMetadata;
+  export default function SearchPage(): ReactNode;
 }
 
 declare module '@theme/SearchBar' {
-  const SearchBar: () => JSX.Element;
-  export default SearchBar;
+  import type {ReactNode} from 'react';
+
+  export default function SearchBar(): ReactNode;
+}
+
+declare module '@theme/SearchTranslations' {
+  import type {DocSearchTranslations} from '@docsearch/react';
+
+  const translations: DocSearchTranslations & {placeholder: string};
+  export default translations;
 }

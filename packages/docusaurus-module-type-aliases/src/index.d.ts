@@ -6,8 +6,9 @@
  */
 
 declare module '@generated/client-modules' {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const clientModules: readonly any[];
+  import type {ClientModule} from '@docusaurus/types';
+
+  const clientModules: readonly (ClientModule & {default?: ClientModule})[];
   export default clientModules;
 }
 
@@ -19,90 +20,97 @@ declare module '@generated/docusaurus.config' {
 }
 
 declare module '@generated/site-metadata' {
-  import type {DocusaurusSiteMetadata} from '@docusaurus/types';
+  import type {SiteMetadata} from '@docusaurus/types';
 
-  const siteMetadata: DocusaurusSiteMetadata;
+  const siteMetadata: SiteMetadata;
   export = siteMetadata;
 }
 
+declare module '@generated/site-storage' {
+  import type {SiteStorage} from '@docusaurus/types';
+
+  const siteStorage: SiteStorage;
+  export = siteStorage;
+}
+
 declare module '@generated/registry' {
-  const registry: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    readonly [key: string]: [() => Promise<any>, string, string];
-  };
+  import type {Registry} from '@docusaurus/types';
+
+  const registry: Registry;
   export default registry;
 }
 
 declare module '@generated/routes' {
-  import type {RouteConfig} from 'react-router-config';
+  import type {RouteConfig as RRRouteConfig} from 'react-router-config';
+  import type Loadable from 'react-loadable';
 
-  type Route = {
-    readonly path: string;
-    readonly component: RouteConfig['component'];
-    readonly exact?: boolean;
-    readonly routes?: Route[];
+  type RouteConfig = RRRouteConfig & {
+    path: string;
+    component: ReturnType<typeof Loadable>;
   };
-  const routes: Route[];
+  const routes: RouteConfig[];
   export default routes;
 }
 
 declare module '@generated/routesChunkNames' {
-  import type {RouteChunksTree} from '@docusaurus/types';
+  import type {RouteChunkNames} from '@docusaurus/types';
 
-  const routesChunkNames: Record<string, RouteChunksTree>;
+  const routesChunkNames: RouteChunkNames;
   export = routesChunkNames;
 }
 
 declare module '@generated/globalData' {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const globalData: Record<string, any>;
+  import type {GlobalData} from '@docusaurus/types';
+
+  const globalData: GlobalData;
   export = globalData;
 }
 
 declare module '@generated/i18n' {
-  const i18n: {
-    defaultLocale: string;
-    locales: [string, ...string[]];
-    currentLocale: string;
-    localeConfigs: Record<string, {label: string; direction: string}>;
-  };
+  import type {I18n} from '@docusaurus/types';
+
+  const i18n: I18n;
   export = i18n;
 }
 
 declare module '@generated/codeTranslations' {
-  const codeTranslations: Record<string, string>;
+  import type {CodeTranslations} from '@docusaurus/types';
+
+  const codeTranslations: CodeTranslations;
   export = codeTranslations;
 }
 
 declare module '@theme-original/*';
+declare module '@theme-init/*';
 
 declare module '@theme/Error' {
-  export interface Props {
-    readonly error: Error;
-    readonly tryAgain: () => void;
-  }
-  export default function Error(props: Props): JSX.Element;
+  import type {ReactNode} from 'react';
+  import type {FallbackParams} from '@docusaurus/ErrorBoundary';
+
+  export interface Props extends FallbackParams {}
+  export default function Error(props: Props): ReactNode;
 }
 
 declare module '@theme/Layout' {
   import type {ReactNode} from 'react';
 
   export interface Props {
-    readonly children: ReactNode;
-    readonly title?: string;
-    readonly description?: string;
+    readonly children?: ReactNode;
   }
-  export default function Layout(props: Props): JSX.Element;
+  export default function Layout(props: Props): ReactNode;
 }
 
 declare module '@theme/Loading' {
+  import type {ReactNode} from 'react';
   import type {LoadingComponentProps} from 'react-loadable';
 
-  export default function Loading(props: LoadingComponentProps): JSX.Element;
+  export default function Loading(props: LoadingComponentProps): ReactNode;
 }
 
 declare module '@theme/NotFound' {
-  export default function NotFound(): JSX.Element;
+  import type {ReactNode} from 'react';
+
+  export default function NotFound(): ReactNode;
 }
 
 declare module '@theme/Root' {
@@ -111,7 +119,13 @@ declare module '@theme/Root' {
   export interface Props {
     readonly children: ReactNode;
   }
-  export default function Root({children}: Props): JSX.Element;
+  export default function Root({children}: Props): ReactNode;
+}
+
+declare module '@theme/SiteMetadata' {
+  import type {ReactNode} from 'react';
+
+  export default function SiteMetadata(): ReactNode;
 }
 
 declare module '@docusaurus/constants' {
@@ -120,30 +134,36 @@ declare module '@docusaurus/constants' {
 
 declare module '@docusaurus/ErrorBoundary' {
   import type {ReactNode} from 'react';
-  import ErrorComponent from '@theme/Error';
+
+  export type FallbackParams = {
+    readonly error: Error;
+    readonly tryAgain: () => void;
+  };
+
+  export type FallbackFunction = (params: FallbackParams) => ReactNode;
 
   export interface Props {
-    readonly fallback?: typeof ErrorComponent;
+    readonly fallback?: FallbackFunction;
     readonly children: ReactNode;
   }
-  export default function ErrorBoundary(props: Props): JSX.Element;
+  export default function ErrorBoundary(props: Props): ReactNode;
 }
 
 declare module '@docusaurus/Head' {
-  import type {HelmetProps} from 'react-helmet';
   import type {ReactNode} from 'react';
+  import type {HelmetProps} from 'react-helmet-async';
 
-  export type HeadProps = HelmetProps & {children: ReactNode};
+  export type Props = HelmetProps & {children: ReactNode};
 
-  const Head: (props: HeadProps) => JSX.Element;
-  export default Head;
+  export default function Head(props: Props): ReactNode;
 }
 
 declare module '@docusaurus/Link' {
-  import type {CSSProperties, ComponentProps} from 'react';
+  import type {CSSProperties, ComponentProps, ReactNode} from 'react';
+  import type {NavLinkProps as RRNavLinkProps} from 'react-router-dom';
 
-  type NavLinkProps = Partial<import('react-router-dom').NavLinkProps>;
-  export type LinkProps = NavLinkProps &
+  type NavLinkProps = Partial<RRNavLinkProps>;
+  export type Props = NavLinkProps &
     ComponentProps<'a'> & {
       readonly className?: string;
       readonly style?: CSSProperties;
@@ -152,33 +172,31 @@ declare module '@docusaurus/Link' {
       readonly href?: string;
       readonly autoAddBaseUrl?: boolean;
 
-      // escape hatch in case broken links check is annoying for a specific link
+      /** Escape hatch in case broken links check doesn't make sense. */
       readonly 'data-noBrokenLinkCheck'?: boolean;
     };
-  const Link: (props: LinkProps) => JSX.Element;
-  export default Link;
+  export default function Link(props: Props): ReactNode;
 }
 
 declare module '@docusaurus/Interpolate' {
   import type {ReactNode} from 'react';
 
-  // TODO use TS template literal feature to make values typesafe!
-  // (requires upgrading TS first)
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  export type ExtractInterpolatePlaceholders<Str extends string> = string;
+  export type ExtractInterpolatePlaceholders<Str extends string> =
+    Str extends `${string}{${infer Key}}${infer Rest}`
+      ? Key | ExtractInterpolatePlaceholders<Rest>
+      : never;
 
-  export type InterpolateValues<
-    Str extends string,
-    Value extends ReactNode,
-  > = Record<ExtractInterpolatePlaceholders<Str>, Value>;
+  export type InterpolateValues<Str extends string, Value extends ReactNode> = {
+    [key in ExtractInterpolatePlaceholders<Str>]: Value;
+  };
 
-  // TS function overload: if all the values are plain strings, then interpolate returns a simple string
+  // If all the values are plain strings, interpolate returns a simple string
   export function interpolate<Str extends string>(
     text: Str,
     values?: InterpolateValues<Str, string | number>,
   ): string;
 
-  // If values contain any ReactNode, then the return is a ReactNode
+  // If values contain any ReactNode, the return is a ReactNode
   export function interpolate<Str extends string, Value extends ReactNode>(
     text: Str,
     values?: InterpolateValues<Str, Value>,
@@ -191,7 +209,7 @@ declare module '@docusaurus/Interpolate' {
 
   export default function Interpolate<Str extends string>(
     props: InterpolateProps<Str>,
-  ): JSX.Element;
+  ): ReactNode;
 }
 
 declare module '@docusaurus/Translate' {
@@ -200,13 +218,18 @@ declare module '@docusaurus/Translate' {
 
   // TS type to ensure that at least one of id or message is always provided
   // (Generic permits to handled message provided as React children)
-  type IdOrMessage<MessageKey extends 'children' | 'message'> =
-    | ({[key in MessageKey]: string} & {id?: string})
-    | ({[key in MessageKey]?: string} & {id: string});
+  type IdOrMessage<
+    MessageKey extends 'children' | 'message',
+    Str extends string,
+  > =
+    | ({[key in MessageKey]: Str} & {id?: string})
+    | ({[key in MessageKey]?: Str} & {id: string});
 
-  export type TranslateParam<Str extends string> = IdOrMessage<'message'> & {
+  export type TranslateParam<Str extends string> = IdOrMessage<
+    'message',
+    Str
+  > & {
     description?: string;
-    values?: InterpolateValues<Str, string | number>;
   };
 
   export function translate<Str extends string>(
@@ -214,29 +237,49 @@ declare module '@docusaurus/Translate' {
     values?: InterpolateValues<Str, string | number>,
   ): string;
 
-  export type TranslateProps<Str extends string> = IdOrMessage<'children'> & {
+  export type TranslateProps<Str extends string> = IdOrMessage<
+    'children',
+    Str
+  > & {
     description?: string;
     values?: InterpolateValues<Str, ReactNode>;
   };
 
   export default function Translate<Str extends string>(
     props: TranslateProps<Str>,
-  ): JSX.Element;
+  ): ReactNode;
 }
 
 declare module '@docusaurus/router' {
   // eslint-disable-next-line import/no-extraneous-dependencies
-  export * from 'react-router-dom';
+  export {useHistory, useLocation, Redirect, matchPath} from 'react-router-dom';
 }
-declare module '@docusaurus/history' {
-  // eslint-disable-next-line import/no-extraneous-dependencies
-  export * from 'history';
+
+declare module '@docusaurus/useIsomorphicLayoutEffect' {
+  import {useLayoutEffect} from 'react';
+
+  export = useLayoutEffect;
 }
 
 declare module '@docusaurus/useDocusaurusContext' {
   import type {DocusaurusContext} from '@docusaurus/types';
 
   export default function useDocusaurusContext(): DocusaurusContext;
+}
+
+declare module '@docusaurus/useRouteContext' {
+  import type {PluginRouteContext} from '@docusaurus/types';
+
+  export default function useRouteContext(): PluginRouteContext;
+}
+
+declare module '@docusaurus/useBrokenLinks' {
+  export type BrokenLinks = {
+    collectLink: (link: string | undefined) => void;
+    collectAnchor: (anchor: string | undefined) => void;
+  };
+
+  export default function useBrokenLinks(): BrokenLinks;
 }
 
 declare module '@docusaurus/useIsBrowser' {
@@ -274,20 +317,20 @@ declare module '@docusaurus/ExecutionEnvironment' {
 declare module '@docusaurus/ComponentCreator' {
   import type Loadable from 'react-loadable';
 
-  function ComponentCreator(
+  export default function ComponentCreator(
     path: string,
     hash: string,
   ): ReturnType<typeof Loadable>;
-  export default ComponentCreator;
 }
 
 declare module '@docusaurus/BrowserOnly' {
+  import type {ReactNode} from 'react';
+
   export interface Props {
-    readonly children?: () => JSX.Element;
-    readonly fallback?: JSX.Element;
+    readonly children?: () => ReactNode;
+    readonly fallback?: ReactNode;
   }
-  const BrowserOnly: (props: Props) => JSX.Element | null;
-  export default BrowserOnly;
+  export default function BrowserOnly(props: Props): ReactNode | null;
 }
 
 declare module '@docusaurus/isInternalUrl' {
@@ -307,24 +350,42 @@ declare module '@docusaurus/renderRoutes' {
 }
 
 declare module '@docusaurus/useGlobalData' {
-  export function useAllPluginInstancesData<T = unknown>(
-    pluginName: string,
-  ): Record<string, T>;
+  import type {GlobalData, UseDataOptions} from '@docusaurus/types';
 
-  export function usePluginData<T = unknown>(
+  export function useAllPluginInstancesData(
+    pluginName: string,
+    options: {failfast: true},
+  ): GlobalData[string];
+
+  export function useAllPluginInstancesData(
+    pluginName: string,
+    options?: UseDataOptions,
+  ): GlobalData[string] | undefined;
+
+  export function usePluginData(
+    pluginName: string,
+    pluginId: string | undefined,
+    options: {failfast: true},
+  ): NonNullable<GlobalData[string][string]>;
+
+  export function usePluginData(
     pluginName: string,
     pluginId?: string,
-  ): T;
+    options?: UseDataOptions,
+  ): GlobalData[string][string];
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  function useGlobalData(): Record<string, any>;
-  export default useGlobalData;
+  export default function useGlobalData(): GlobalData;
 }
 
+// TODO find a way to move this ambient type to the SVGR plugin?
+//  unfortunately looks complicated in practice
+//  see https://x.com/sebastienlorber/status/1859543512661832053
 declare module '*.svg' {
   import type {ComponentType, SVGProps} from 'react';
 
-  const ReactComponent: ComponentType<SVGProps<SVGSVGElement>>;
+  const ReactComponent: ComponentType<
+    SVGProps<SVGSVGElement> & {title?: string}
+  >;
 
   export default ReactComponent;
 }
@@ -337,4 +398,28 @@ declare module '*.module.css' {
 declare module '*.css' {
   const src: string;
   export default src;
+}
+
+declare module '*.md' {
+  import type {ComponentType} from 'react';
+
+  const ReactComponent: ComponentType<unknown>;
+
+  export default ReactComponent;
+}
+
+declare module '*.mdx' {
+  import type {ComponentType} from 'react';
+
+  const ReactComponent: ComponentType<unknown>;
+
+  export default ReactComponent;
+}
+
+interface Window {
+  docusaurus: {
+    prefetch: (url: string) => false | Promise<void[]>;
+    preload: (url: string) => false | Promise<void[]>;
+  };
+  docusaurusRoot?: import('react-dom/client').Root;
 }
